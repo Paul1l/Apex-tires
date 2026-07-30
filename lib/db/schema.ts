@@ -7,13 +7,36 @@ export const users = sqliteTable(
     email: text("email").notNull(),
     name: text("name").notNull(),
     phone: text("phone"),
-    passwordHash: text("password_hash").notNull(),
+    passwordHash: text("password_hash"),
     role: text("role", { enum: ["customer", "manager", "admin"] }).notNull().default("customer"),
     status: text("status", { enum: ["active", "blocked"] }).notNull().default("active"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [uniqueIndex("users_email_uq").on(table.email)],
+);
+
+export const otpChallenges = sqliteTable(
+  "otp_challenges",
+  {
+    id: text("id").primaryKey(),
+    emailHash: text("email_hash").notNull(),
+    requesterHash: text("requester_hash").notNull(),
+    intent: text("intent", { enum: ["login", "register"] }).notNull(),
+    codeHash: text("code_hash").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("otp_challenges_email_idx").on(table.emailHash, table.createdAt),
+    index("otp_challenges_requester_idx").on(
+      table.requesterHash,
+      table.createdAt,
+    ),
+    index("otp_challenges_expiry_idx").on(table.expiresAt),
+  ],
 );
 
 export const sessions = sqliteTable(
@@ -38,6 +61,7 @@ export const consents = sqliteTable(
     purpose: text("purpose", {
       enum: ["registration", "checkout", "callback", "analytics"],
     }).notNull(),
+    documentSlug: text("document_slug").notNull(),
     documentVersion: text("document_version").notNull(),
     grantedAt: text("granted_at").notNull(),
     revokedAt: text("revoked_at"),

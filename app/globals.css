@@ -2350,6 +2350,12 @@ footer {
   text-transform: uppercase;
 }
 
+.stack-form label small {
+  color: #9a9a9a;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
 .stack-form input {
   height: 46px;
   border: 1px solid var(--line);
@@ -2360,6 +2366,40 @@ footer {
 
 .stack-form input:focus {
   border-color: var(--sand-dark);
+}
+
+.stack-form .otp-code-input {
+  height: 58px;
+  font-family: var(--font-heading);
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: 0.42em;
+  text-align: center;
+  padding-left: calc(13px + 0.42em);
+}
+
+.otp-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.otp-actions button {
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.otp-actions button:last-child {
+  text-align: right;
+}
+
+.otp-actions button:disabled {
+  opacity: 0.5;
 }
 
 .form-message {

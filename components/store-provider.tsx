@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { seedProducts } from "@/lib/catalog-data";
-import type { CartLine, Product, SavedUser, UserProfile } from "@/lib/types";
+import type { CartLine, Product, UserProfile } from "@/lib/types";
 
 interface StoreContextValue {
   products: Product[];
@@ -23,8 +23,8 @@ interface StoreContextValue {
   clearCart: () => void;
   toggleFavorite: (productId: string) => void;
   toggleCompare: (productId: string) => void;
-  register: (name: string, email: string, password: string) => Promise<{ ok: boolean; message: string }>;
   login: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
+  authenticateUser: (profile: UserProfile) => void;
   loginAsDemoAdmin: () => void;
   logout: () => void;
   saveProduct: (product: Product) => void;
@@ -40,29 +40,14 @@ const BROWSER_STORAGE_KEYS = {
   favorites: "apex.favorites.v1",
   compare: "apex.compare.v1",
   user: "apex.user.v1",
-  users: "apex.users.v1",
 };
 
-const DEMO_ADMIN_USER: SavedUser = {
+const DEMO_ADMIN_USER: UserProfile = {
   id: "admin-demo",
   name: "Александр",
   email: "admin@apex.local",
   role: "admin",
-  passwordHash: "",
 };
-
-/**
- * Produces a deterministic hash for the offline demonstration only.
- * Production authentication must use a server-side password algorithm such as
- * Argon2id and must never store credentials in localStorage.
- */
-async function hashDemoPassword(password: string) {
-  const data = new TextEncoder().encode(`apex-demo:${password}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 function readBrowserStorage<T>(key: string, fallbackValue: T): T {
   try {
@@ -76,11 +61,10 @@ function readBrowserStorage<T>(key: string, fallbackValue: T): T {
 }
 
 /**
- * Provides interactive catalog, cart and demo authentication state.
+ * Provides interactive catalog, cart and authenticated user state.
  *
- * This adapter intentionally uses the browser so the private prototype works
- * without infrastructure. Replace it with server repositories before accepting
- * real registrations or orders; see docs/ARCHITECTURE.md.
+ * Catalog editing remains a browser prototype. Customer identity is established
+ * by the server OTP API; only a display-safe profile is cached locally.
  */
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [products, setProducts] = useState<Product[]>(seedProducts);
@@ -88,7 +72,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [compare, setCompare] = useState<string[]>([]);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [users, setUsers] = useState<SavedUser[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -100,9 +83,32 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       readBrowserStorage(BROWSER_STORAGE_KEYS.favorites, []),
     );
     setCompare(readBrowserStorage(BROWSER_STORAGE_KEYS.compare, []));
-    setUser(readBrowserStorage(BROWSER_STORAGE_KEYS.user, null));
-    setUsers(readBrowserStorage(BROWSER_STORAGE_KEYS.users, []));
+    const cachedUser = readBrowserStorage<UserProfile | null>(
+      BROWSER_STORAGE_KEYS.user,
+      null,
+    );
+    setUser(cachedUser);
     setHydrated(true);
+
+    if (cachedUser?.id !== DEMO_ADMIN_USER.id) {
+      void fetch("/api/auth/session", {
+        credentials: "same-origin",
+        cache: "no-store",
+      })
+        .then(async (response) => {
+          if (response.ok) {
+            const result = (await response.json()) as {
+              user?: UserProfile;
+            };
+            if (result.user) setUser(result.user);
+          } else if (response.status === 401) {
+            setUser(null);
+          }
+        })
+        .catch(() => {
+          // A temporary API outage must not break the rest of the SPA.
+        });
+    }
   }, []);
 
   useEffect(() => {
@@ -127,11 +133,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       BROWSER_STORAGE_KEYS.user,
       JSON.stringify(user),
     );
-    localStorage.setItem(
-      BROWSER_STORAGE_KEYS.users,
-      JSON.stringify(users),
-    );
-  }, [products, cart, favorites, compare, user, users, hydrated]);
+  }, [products, cart, favorites, compare, user, hydrated]);
 
   const addToCart = useCallback((productId: string, quantity = 1) => {
     setCart((current) => {
@@ -175,59 +177,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const register = useCallback(
-    async (name: string, email: string, password: string) => {
-      const normalizedEmail = email.trim().toLowerCase();
-      if (users.some((item) => item.email === normalizedEmail)) {
-        return { ok: false, message: "Аккаунт с этой почтой уже существует" };
-      }
-      const passwordHash = await hashDemoPassword(password);
-      const profile: SavedUser = {
-        id: crypto.randomUUID(),
-        name: name.trim(),
-        email: normalizedEmail,
-        role: "customer",
-        passwordHash,
-      };
-      setUsers((current) => [...current, profile]);
-      const {
-        passwordHash: storedPasswordHash,
-        ...safeProfile
-      } = profile;
-      void storedPasswordHash;
-      setUser(safeProfile);
-      return { ok: true, message: "Аккаунт создан" };
-    },
-    [users],
-  );
-
-  const login = useCallback(
-    async (email: string, password: string) => {
-      const normalizedEmail = email.trim().toLowerCase();
-      if (
-        normalizedEmail === DEMO_ADMIN_USER.email &&
-        password === "Apex2026!"
-      ) {
-        setUser(DEMO_ADMIN_USER);
-        return { ok: true, message: "Вход выполнен" };
-      }
-      const passwordHash = await hashDemoPassword(password);
-      const matched = users.find(
-        (item) => item.email === normalizedEmail && item.passwordHash === passwordHash,
-      );
-      if (!matched) {
-        return { ok: false, message: "Проверьте почту и пароль" };
-      }
-      const {
-        passwordHash: storedPasswordHash,
-        ...safeProfile
-      } = matched;
-      void storedPasswordHash;
-      setUser(safeProfile);
+  const login = useCallback(async (email: string, password: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (
+      normalizedEmail === DEMO_ADMIN_USER.email &&
+      password === "Apex2026!"
+    ) {
+      setUser(DEMO_ADMIN_USER);
       return { ok: true, message: "Вход выполнен" };
-    },
-    [users],
-  );
+    }
+    return {
+      ok: false,
+      message: "Для покупателей используется вход по коду из письма.",
+    };
+  }, []);
 
   const saveProduct = useCallback((product: Product) => {
     setProducts((current) => {
@@ -256,10 +219,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       clearCart: () => setCart([]),
       toggleFavorite,
       toggleCompare,
-      register,
       login,
+      authenticateUser: setUser,
       loginAsDemoAdmin: () => setUser(DEMO_ADMIN_USER),
-      logout: () => setUser(null),
+      logout: () => {
+        setUser(null);
+        void fetch("/api/auth/session", {
+          method: "DELETE",
+          credentials: "same-origin",
+        }).catch(() => undefined);
+      },
       saveProduct,
       deleteProduct,
       resetProducts: () => setProducts(seedProducts),
@@ -275,7 +244,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setCartQuantity,
       toggleFavorite,
       toggleCompare,
-      register,
       login,
       saveProduct,
       deleteProduct,

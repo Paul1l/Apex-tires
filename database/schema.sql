@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   phone TEXT,
-  password_hash TEXT NOT NULL,
+  password_hash TEXT,
   role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('customer', 'manager', 'admin')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked')),
   created_at TEXT NOT NULL,
@@ -22,12 +22,32 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
 
+CREATE TABLE IF NOT EXISTS otp_challenges (
+  id TEXT PRIMARY KEY,
+  email_hash TEXT NOT NULL,
+  requester_hash TEXT NOT NULL,
+  intent TEXT NOT NULL CHECK (intent IN ('login', 'register')),
+  code_hash TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS otp_challenges_email_idx
+  ON otp_challenges(email_hash, created_at);
+CREATE INDEX IF NOT EXISTS otp_challenges_requester_idx
+  ON otp_challenges(requester_hash, created_at);
+CREATE INDEX IF NOT EXISTS otp_challenges_expiry_idx
+  ON otp_challenges(expires_at);
+
 CREATE TABLE IF NOT EXISTS consents (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   purpose TEXT NOT NULL CHECK (
     purpose IN ('registration', 'checkout', 'callback', 'analytics')
   ),
+  document_slug TEXT NOT NULL,
   document_version TEXT NOT NULL,
   granted_at TEXT NOT NULL,
   revoked_at TEXT,

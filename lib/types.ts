@@ -47,10 +47,6 @@ export interface UserProfile {
   role: "customer" | "admin";
 }
 
-export interface SavedUser extends UserProfile {
-  passwordHash: string;
-}
-
 export interface CatalogFilters {
   kind: "all" | ProductKind;
   seasons: Season[];

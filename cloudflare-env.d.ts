@@ -4,4 +4,9 @@ interface CloudflareEnv {
   DB?: D1Database;
   ONEC_SHARED_SECRET?: string;
   YANDEX_METRIKA_COUNTER_ID?: string;
+  OTP_CODE_PEPPER?: string;
+  YANDEX_POSTBOX_ACCESS_KEY_ID?: string;
+  YANDEX_POSTBOX_SECRET_ACCESS_KEY?: string;
+  YANDEX_POSTBOX_FROM_EMAIL?: string;
+  YANDEX_POSTBOX_FROM_NAME?: string;
 }

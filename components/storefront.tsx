@@ -28,7 +28,13 @@ import {
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { carCatalog, formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { openCookieSettings } from "@/lib/cookie-consent";
-import type { CatalogFilters, Product, ProductKind, Season } from "@/lib/types";
+import type {
+  CatalogFilters,
+  Product,
+  ProductKind,
+  Season,
+  UserProfile,
+} from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 
 const initialFilters: CatalogFilters = {
@@ -194,25 +200,137 @@ function Overlay({
 }
 
 function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { login, register, loginAsDemoAdmin } = useStore();
+  const { authenticateUser, loginAsDemoAdmin } = useStore();
   const [mode, setMode] = useState<"login" | "register">("login");
+  const [step, setStep] = useState<"email" | "code">("email");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [challengeId, setChallengeId] = useState("");
+  const [maskedEmail, setMaskedEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [personalDataConsent, setPersonalDataConsent] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [resendCountdown, setResendCountdown] = useState(0);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (resendCountdown <= 0) return;
+    const timerId = window.setTimeout(
+      () => setResendCountdown((current) => Math.max(0, current - 1)),
+      1000,
+    );
+    return () => window.clearTimeout(timerId);
+  }, [resendCountdown]);
+
+  useEffect(() => {
+    if (open) return;
+    setStep("email");
+    setChallengeId("");
+    setCode("");
+    setMessage("");
+  }, [open]);
+
+  function changeMode(nextMode: "login" | "register") {
+    setMode(nextMode);
+    setStep("email");
+    setChallengeId("");
+    setCode("");
+    setMessage("");
+  }
+
+  async function requestEmailCode(
+    requestedEmail: string,
+    requestedName: string,
+    requestedPersonalDataConsent: boolean,
+    requestedTermsAccepted: boolean,
+  ) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/auth/request-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: requestedEmail,
+          intent: mode,
+        }),
+      });
+      const result = (await response.json()) as {
+        ok: boolean;
+        message?: string;
+        challengeId?: string;
+        maskedEmail?: string;
+        resendAfterSeconds?: number;
+      };
+      if (!response.ok || !result.ok || !result.challengeId) {
+        setMessage(result.message || "Не удалось отправить код.");
+        return;
+      }
+
+      setEmail(requestedEmail.trim().toLowerCase());
+      setName(requestedName.trim());
+      setPersonalDataConsent(requestedPersonalDataConsent);
+      setTermsAccepted(requestedTermsAccepted);
+      setChallengeId(result.challengeId);
+      setMaskedEmail(result.maskedEmail || requestedEmail);
+      setCode("");
+      setStep("code");
+      setResendCountdown(result.resendAfterSeconds ?? 60);
+      setMessage("Письмо отправлено. Проверьте также папку «Спам».");
+    } catch {
+      setMessage("Нет связи с сервером регистрации. Попробуйте позже.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitEmail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    await requestEmailCode(
+      String(formData.get("email") || ""),
+      String(formData.get("name") || ""),
+      formData.get("personalDataConsent") === "on",
+      formData.get("termsAccepted") === "on",
+    );
+  }
+
+  async function submitCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setMessage("");
-    const data = new FormData(event.currentTarget);
-    const email = String(data.get("email") || "");
-    const password = String(data.get("password") || "");
-    const result =
-      mode === "login"
-        ? await login(email, password)
-        : await register(String(data.get("name") || ""), email, password);
-    setBusy(false);
-    setMessage(result.message);
-    if (result.ok) setTimeout(onClose, 450);
+    try {
+      const response = await fetch("/api/auth/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          challengeId,
+          code,
+          email,
+          name,
+          personalDataConsent,
+          termsAccepted,
+        }),
+      });
+      const result = (await response.json()) as {
+        ok: boolean;
+        message?: string;
+        user?: UserProfile;
+      };
+      if (!response.ok || !result.ok || !result.user) {
+        setMessage(result.message || "Не удалось подтвердить код.");
+        return;
+      }
+
+      authenticateUser(result.user);
+      setMessage(mode === "register" ? "Аккаунт создан." : "Вход выполнен.");
+      window.setTimeout(onClose, 450);
+    } catch {
+      setMessage("Нет связи с сервером регистрации. Попробуйте позже.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -223,57 +341,114 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
           <span className="logo-mark small"><i /><i /><i /></span>
           APEX
         </div>
-        <p className="eyebrow">{mode === "login" ? "С возвращением" : "Новый аккаунт"}</p>
-        <h2>{mode === "login" ? "Войти в кабинет" : "Создать аккаунт"}</h2>
-        <p className="muted">Сохраняйте автомобили, заказы и персональные подборки.</p>
+        <p className="eyebrow">
+          {step === "code"
+            ? "Подтверждение почты"
+            : mode === "login"
+              ? "С возвращением"
+              : "Новый аккаунт"}
+        </p>
+        <h2>
+          {step === "code"
+            ? "Введите код из письма"
+            : mode === "login"
+              ? "Войти в кабинет"
+              : "Создать аккаунт"}
+        </h2>
+        <p className="muted">
+          {step === "code"
+            ? `Мы отправили 6-значный код на ${maskedEmail}. Он действует 10 минут.`
+            : "Без пароля: отправим одноразовый 6-значный код на вашу почту."}
+        </p>
         <div className="auth-tabs">
-          <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>Вход</button>
-          <button className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>Регистрация</button>
+          <button className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Вход</button>
+          <button className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>Регистрация</button>
         </div>
-        <form onSubmit={submit} className="stack-form">
-          {mode === "register" && (
+        {step === "email" ? (
+          <form onSubmit={submitEmail} className="stack-form">
+            {mode === "register" && (
+              <label>
+                <span>Имя</span>
+                <input name="name" required minLength={2} maxLength={80} placeholder="Алексей" autoComplete="name" />
+              </label>
+            )}
             <label>
-              <span>Имя</span>
-              <input name="name" required minLength={2} placeholder="Алексей" />
+              <span>Электронная почта</span>
+              <input name="email" type="email" required maxLength={254} placeholder="name@example.ru" autoComplete="email" />
+              <small>Адреса @gmail.com и @googlemail.com не поддерживаются.</small>
             </label>
-          )}
-          <label>
-            <span>Электронная почта</span>
-            <input name="email" type="email" required placeholder="name@example.ru" />
-          </label>
-          <label>
-            <span>Пароль</span>
-            <input name="password" type="password" required minLength={6} placeholder="Не менее 6 символов" />
-          </label>
-          {mode === "register" && (
-            <>
-              <label className="consent-row">
-                <input name="personalDataConsent" type="checkbox" required />
-                <span>
-                  Даю отдельное{" "}
-                  <Link href="/legal/personal-data-consent" target="_blank">
-                    согласие на обработку персональных данных
-                  </Link>
-                  .
-                </span>
-              </label>
-              <label className="consent-row">
-                <input name="termsAccepted" type="checkbox" required />
-                <span>
-                  Принимаю{" "}
-                  <Link href="/legal/terms" target="_blank">
-                    правила пользования сайтом
-                  </Link>
-                  .
-                </span>
-              </label>
-            </>
-          )}
-          {message && <p className="form-message">{message}</p>}
-          <button className="primary-button full" disabled={busy}>
-            {busy ? "Проверяем…" : mode === "login" ? "Войти" : "Зарегистрироваться"}
-          </button>
-        </form>
+            {mode === "register" && (
+              <>
+                <label className="consent-row">
+                  <input name="personalDataConsent" type="checkbox" required />
+                  <span>
+                    Даю отдельное{" "}
+                    <Link href="/legal/personal-data-consent" target="_blank">
+                      согласие на обработку персональных данных
+                    </Link>
+                    .
+                  </span>
+                </label>
+                <label className="consent-row">
+                  <input name="termsAccepted" type="checkbox" required />
+                  <span>
+                    Принимаю{" "}
+                    <Link href="/legal/terms" target="_blank">
+                      правила пользования сайтом
+                    </Link>
+                    .
+                  </span>
+                </label>
+              </>
+            )}
+            {message && <p className="form-message">{message}</p>}
+            <button className="primary-button full" disabled={busy}>
+              {busy ? "Отправляем…" : "Получить код"}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={submitCode} className="stack-form">
+            <label>
+              <span>Код подтверждения</span>
+              <input
+                className="otp-code-input"
+                value={code}
+                onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                name="code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="\d{6}"
+                maxLength={6}
+                required
+                autoFocus
+                placeholder="000000"
+              />
+            </label>
+            {message && <p className="form-message">{message}</p>}
+            <button className="primary-button full" disabled={busy || code.length !== 6}>
+              {busy ? "Проверяем…" : mode === "login" ? "Войти" : "Подтвердить регистрацию"}
+            </button>
+            <div className="otp-actions">
+              <button type="button" onClick={() => setStep("email")}>Изменить почту</button>
+              <button
+                type="button"
+                disabled={busy || resendCountdown > 0}
+                onClick={() =>
+                  void requestEmailCode(
+                    email,
+                    name,
+                    personalDataConsent,
+                    termsAccepted,
+                  )
+                }
+              >
+                {resendCountdown > 0
+                  ? `Повторить через ${resendCountdown} с`
+                  : "Отправить код ещё раз"}
+              </button>
+            </div>
+          </form>
+        )}
         <button
           className="demo-admin-button"
           onClick={() => {
