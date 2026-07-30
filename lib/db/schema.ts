@@ -28,6 +28,29 @@ export const sessions = sqliteTable(
   (table) => [uniqueIndex("sessions_token_uq").on(table.tokenHash), index("sessions_user_idx").on(table.userId)],
 );
 
+export const consents = sqliteTable(
+  "consents",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    purpose: text("purpose", {
+      enum: ["registration", "checkout", "callback", "analytics"],
+    }).notNull(),
+    documentVersion: text("document_version").notNull(),
+    grantedAt: text("granted_at").notNull(),
+    revokedAt: text("revoked_at"),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    source: text("source").notNull(),
+  },
+  (table) => [
+    index("consents_user_idx").on(table.userId, table.grantedAt),
+    index("consents_purpose_idx").on(table.purpose, table.grantedAt),
+  ],
+);
+
 export const products = sqliteTable(
   "products",
   {
@@ -171,4 +194,30 @@ export const syncRuns = sqliteTable(
     finishedAt: text("finished_at"),
   },
   (table) => [index("sync_runs_entity_idx").on(table.entity, table.startedAt)],
+);
+
+export const adminAuditLog = sqliteTable(
+  "admin_audit_log",
+  {
+    id: text("id").primaryKey(),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    action: text("action").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id"),
+    detailsJson: text("details_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("admin_audit_actor_idx").on(
+      table.actorUserId,
+      table.createdAt,
+    ),
+    index("admin_audit_entity_idx").on(
+      table.entityType,
+      table.entityId,
+      table.createdAt,
+    ),
+  ],
 );

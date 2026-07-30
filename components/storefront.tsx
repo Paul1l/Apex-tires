@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { carCatalog, formatPrice, seasonLabels } from "@/lib/catalog-data";
+import { openCookieSettings } from "@/lib/cookie-consent";
 import type { CatalogFilters, Product, ProductKind, Season } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 
@@ -244,6 +245,30 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             <span>Пароль</span>
             <input name="password" type="password" required minLength={6} placeholder="Не менее 6 символов" />
           </label>
+          {mode === "register" && (
+            <>
+              <label className="consent-row">
+                <input name="personalDataConsent" type="checkbox" required />
+                <span>
+                  Даю отдельное{" "}
+                  <Link href="/legal/personal-data-consent" target="_blank">
+                    согласие на обработку персональных данных
+                  </Link>
+                  .
+                </span>
+              </label>
+              <label className="consent-row">
+                <input name="termsAccepted" type="checkbox" required />
+                <span>
+                  Принимаю{" "}
+                  <Link href="/legal/terms" target="_blank">
+                    правила пользования сайтом
+                  </Link>
+                  .
+                </span>
+              </label>
+            </>
+          )}
           {message && <p className="form-message">{message}</p>}
           <button className="primary-button full" disabled={busy}>
             {busy ? "Проверяем…" : mode === "login" ? "Войти" : "Зарегистрироваться"}
@@ -258,7 +283,10 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         >
           <Sparkles size={16} /> Войти в демо-админку
         </button>
-        <p className="privacy-note">Продолжая, вы соглашаетесь с политикой конфиденциальности.</p>
+        <p className="privacy-note">
+          Как мы защищаем данные — в{" "}
+          <Link href="/legal/privacy">политике конфиденциальности</Link>.
+        </p>
       </section>
     </Overlay>
   );
@@ -327,16 +355,43 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
               <div><span>Доставка по Москве</span><strong className="accent-text">Бесплатно</strong></div>
               <div className="summary-total"><span>Итого</span><strong>{formatPrice(total)}</strong></div>
               {!user && <p className="summary-hint">Можно оформить без регистрации. Аккаунт пригодится для истории заказов.</p>}
-              <button
-                className="primary-button full"
-                onClick={() => {
+              <label className="consent-row checkout-consent">
+                <input form="apex-demo-order" type="checkbox" required />
+                <span>
+                  Принимаю{" "}
+                  <Link href="/legal/offer" target="_blank">
+                    публичную оферту
+                  </Link>{" "}
+                  и{" "}
+                  <Link href="/legal/delivery-payment-returns" target="_blank">
+                    условия доставки и возврата
+                  </Link>
+                  .
+                </span>
+              </label>
+              <label className="consent-row checkout-consent">
+                <input form="apex-demo-order" type="checkbox" required />
+                <span>
+                  Даю отдельное{" "}
+                  <Link href="/legal/personal-data-consent" target="_blank">
+                    согласие на обработку персональных данных
+                  </Link>
+                  .
+                </span>
+              </label>
+              <form
+                id="apex-demo-order"
+                onSubmit={(event) => {
+                  event.preventDefault();
                   setOrdered(true);
                   clearCart();
                   notify("Заказ передан менеджеру");
                 }}
               >
-                Оформить заказ <ArrowRight size={17} />
-              </button>
+                <button className="primary-button full" type="submit">
+                  Оформить заказ <ArrowRight size={17} />
+                </button>
+              </form>
               <button className="clear-button" onClick={clearCart}>Очистить корзину</button>
             </div>
           </>
@@ -842,9 +897,18 @@ export function Storefront() {
           </div>
           <div className="consult-copy"><p>Поможем с размером, бюджетом и датой монтажа. Без навязчивых продаж.</p><a href="tel:+78005509887"><Phone size={17} /> 8 800 550-98-87</a></div>
           <form onSubmit={(event) => { event.preventDefault(); notify("Спасибо! Эксперт скоро позвонит"); (event.currentTarget as HTMLFormElement).reset(); }}>
-            <input required type="tel" placeholder="+7 (___) ___-__-__" />
+            <input name="phone" required type="tel" placeholder="+7 (___) ___-__-__" aria-label="Номер телефона" />
+            <label className="consent-row consult-consent">
+              <input name="personalDataConsent" type="checkbox" required />
+              <span>
+                Даю отдельное{" "}
+                <Link href="/legal/personal-data-consent" target="_blank">
+                  согласие на обработку персональных данных
+                </Link>
+                .
+              </span>
+            </label>
             <button className="light-button">Перезвоните мне <ArrowRight size={17} /></button>
-            <small>Нажимая кнопку, вы соглашаетесь с обработкой данных.</small>
           </form>
         </div>
       </section>
@@ -858,10 +922,10 @@ export function Storefront() {
             <span>Ежедневно с 9:00 до 21:00</span>
           </div>
           <div><h4>Каталог</h4><button onClick={() => { setFilters((f) => ({ ...f, kind: "tire" })); scrollToCatalog(); }}>Шины</button><button onClick={() => { setFilters((f) => ({ ...f, kind: "wheel" })); scrollToCatalog(); }}>Диски</button><button onClick={() => { setSelectorTab("car"); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Подбор по авто</button><a href="#services">Шиномонтаж</a></div>
-          <div><h4>Покупателям</h4><span>Доставка и оплата</span><span>Гарантия и возврат</span><span>Пункты выдачи</span><span>Корпоративным клиентам</span></div>
-          <div><h4>Компания</h4><span>О нас</span><span>Контакты</span><span>Вакансии</span><Link href="/admin">Apex Control</Link></div>
+          <div><h4>Покупателям</h4><Link href="/legal/delivery-payment-returns">Доставка и оплата</Link><Link href="/legal/delivery-payment-returns">Гарантия и возврат</Link><Link href="/legal/offer">Публичная оферта</Link><Link href="/legal/terms">Правила пользования</Link></div>
+          <div><h4>Компания</h4><Link href="/legal/requisites">Реквизиты и контакты</Link><Link href="/legal/privacy">Персональные данные</Link><button type="button" onClick={openCookieSettings}>Настройки cookie</button><Link href="/admin">Apex Control</Link></div>
         </div>
-        <div className="container footer-bottom"><span>© 2026 APEX WHEELS</span><span>Информация на сайте не является публичной офертой.</span><span>Политика конфиденциальности</span></div>
+        <div className="container footer-bottom"><span>© 2026 APEX WHEELS</span><Link href="/legal">Правовая информация</Link><Link href="/legal/privacy">Политика конфиденциальности</Link></div>
       </footer>
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />

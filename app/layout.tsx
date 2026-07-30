@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope, Unbounded } from "next/font/google";
+import { PrivacyTools } from "@/components/privacy-tools";
 import { StoreProvider } from "@/components/store-provider";
 import "./globals.css";
 
@@ -29,7 +30,10 @@ export default function RootLayout({
   return (
     <html lang="ru">
       <body className={`${manrope.variable} ${unbounded.variable}`}>
-        <StoreProvider>{children}</StoreProvider>
+        <StoreProvider>
+          {children}
+          <PrivacyTools />
+        </StoreProvider>
       </body>
     </html>
   );

@@ -22,6 +22,23 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
 
+CREATE TABLE IF NOT EXISTS consents (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  purpose TEXT NOT NULL CHECK (
+    purpose IN ('registration', 'checkout', 'callback', 'analytics')
+  ),
+  document_version TEXT NOT NULL,
+  granted_at TEXT NOT NULL,
+  revoked_at TEXT,
+  ip_address TEXT,
+  user_agent TEXT,
+  source TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS consents_user_idx ON consents(user_id, granted_at);
+CREATE INDEX IF NOT EXISTS consents_purpose_idx ON consents(purpose, granted_at);
+
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
   external_id TEXT UNIQUE,
@@ -144,3 +161,18 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 );
 
 CREATE INDEX IF NOT EXISTS sync_runs_entity_idx ON sync_runs(entity, started_at);
+
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id TEXT PRIMARY KEY,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT,
+  details_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS admin_audit_actor_idx
+  ON admin_audit_log(actor_user_id, created_at);
+CREATE INDEX IF NOT EXISTS admin_audit_entity_idx
+  ON admin_audit_log(entity_type, entity_id, created_at);

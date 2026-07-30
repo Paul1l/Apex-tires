@@ -8,7 +8,7 @@
     "build:worker": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint app components lib eslint.config.mjs",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
@@ -27,9 +27,9 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "eslint": "latest",
+    "eslint": "9.39.2",
     "eslint-config-next": "latest",
-    "typescript": "latest",
+    "typescript": "6.0.2",
     "wrangler": "latest"
   },
   "packageManager": "pnpm@11.9.0"

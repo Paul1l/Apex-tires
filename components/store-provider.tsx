@@ -34,7 +34,7 @@ interface StoreContextValue {
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
-const STORAGE = {
+const BROWSER_STORAGE_KEYS = {
   products: "apex.products.v1",
   cart: "apex.cart.v1",
   favorites: "apex.favorites.v1",
@@ -43,7 +43,7 @@ const STORAGE = {
   users: "apex.users.v1",
 };
 
-const demoAdmin: SavedUser = {
+const DEMO_ADMIN_USER: SavedUser = {
   id: "admin-demo",
   name: "Александр",
   email: "admin@apex.local",
@@ -51,7 +51,12 @@ const demoAdmin: SavedUser = {
   passwordHash: "",
 };
 
-async function hashPassword(password: string) {
+/**
+ * Produces a deterministic hash for the offline demonstration only.
+ * Production authentication must use a server-side password algorithm such as
+ * Argon2id and must never store credentials in localStorage.
+ */
+async function hashDemoPassword(password: string) {
   const data = new TextEncoder().encode(`apex-demo:${password}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest))
@@ -59,15 +64,24 @@ async function hashPassword(password: string) {
     .join("");
 }
 
-function readStorage<T>(key: string, fallback: T): T {
+function readBrowserStorage<T>(key: string, fallbackValue: T): T {
   try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
+    const serializedValue = window.localStorage.getItem(key);
+    return serializedValue
+      ? (JSON.parse(serializedValue) as T)
+      : fallbackValue;
   } catch {
-    return fallback;
+    return fallbackValue;
   }
 }
 
+/**
+ * Provides interactive catalog, cart and demo authentication state.
+ *
+ * This adapter intentionally uses the browser so the private prototype works
+ * without infrastructure. Replace it with server repositories before accepting
+ * real registrations or orders; see docs/ARCHITECTURE.md.
+ */
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [products, setProducts] = useState<Product[]>(seedProducts);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -78,23 +92,45 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setProducts(readStorage(STORAGE.products, seedProducts));
-    setCart(readStorage(STORAGE.cart, []));
-    setFavorites(readStorage(STORAGE.favorites, []));
-    setCompare(readStorage(STORAGE.compare, []));
-    setUser(readStorage(STORAGE.user, null));
-    setUsers(readStorage(STORAGE.users, []));
+    setProducts(
+      readBrowserStorage(BROWSER_STORAGE_KEYS.products, seedProducts),
+    );
+    setCart(readBrowserStorage(BROWSER_STORAGE_KEYS.cart, []));
+    setFavorites(
+      readBrowserStorage(BROWSER_STORAGE_KEYS.favorites, []),
+    );
+    setCompare(readBrowserStorage(BROWSER_STORAGE_KEYS.compare, []));
+    setUser(readBrowserStorage(BROWSER_STORAGE_KEYS.user, null));
+    setUsers(readBrowserStorage(BROWSER_STORAGE_KEYS.users, []));
     setHydrated(true);
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(STORAGE.products, JSON.stringify(products));
-    localStorage.setItem(STORAGE.cart, JSON.stringify(cart));
-    localStorage.setItem(STORAGE.favorites, JSON.stringify(favorites));
-    localStorage.setItem(STORAGE.compare, JSON.stringify(compare));
-    localStorage.setItem(STORAGE.user, JSON.stringify(user));
-    localStorage.setItem(STORAGE.users, JSON.stringify(users));
+    localStorage.setItem(
+      BROWSER_STORAGE_KEYS.products,
+      JSON.stringify(products),
+    );
+    localStorage.setItem(
+      BROWSER_STORAGE_KEYS.cart,
+      JSON.stringify(cart),
+    );
+    localStorage.setItem(
+      BROWSER_STORAGE_KEYS.favorites,
+      JSON.stringify(favorites),
+    );
+    localStorage.setItem(
+      BROWSER_STORAGE_KEYS.compare,
+      JSON.stringify(compare),
+    );
+    localStorage.setItem(
+      BROWSER_STORAGE_KEYS.user,
+      JSON.stringify(user),
+    );
+    localStorage.setItem(
+      BROWSER_STORAGE_KEYS.users,
+      JSON.stringify(users),
+    );
   }, [products, cart, favorites, compare, user, users, hydrated]);
 
   const addToCart = useCallback((productId: string, quantity = 1) => {
@@ -145,7 +181,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (users.some((item) => item.email === normalizedEmail)) {
         return { ok: false, message: "Аккаунт с этой почтой уже существует" };
       }
-      const passwordHash = await hashPassword(password);
+      const passwordHash = await hashDemoPassword(password);
       const profile: SavedUser = {
         id: crypto.randomUUID(),
         name: name.trim(),
@@ -154,7 +190,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         passwordHash,
       };
       setUsers((current) => [...current, profile]);
-      const { passwordHash: _, ...safeProfile } = profile;
+      const {
+        passwordHash: storedPasswordHash,
+        ...safeProfile
+      } = profile;
+      void storedPasswordHash;
       setUser(safeProfile);
       return { ok: true, message: "Аккаунт создан" };
     },
@@ -164,18 +204,25 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       const normalizedEmail = email.trim().toLowerCase();
-      if (normalizedEmail === demoAdmin.email && password === "Apex2026!") {
-        setUser(demoAdmin);
+      if (
+        normalizedEmail === DEMO_ADMIN_USER.email &&
+        password === "Apex2026!"
+      ) {
+        setUser(DEMO_ADMIN_USER);
         return { ok: true, message: "Вход выполнен" };
       }
-      const passwordHash = await hashPassword(password);
+      const passwordHash = await hashDemoPassword(password);
       const matched = users.find(
         (item) => item.email === normalizedEmail && item.passwordHash === passwordHash,
       );
       if (!matched) {
         return { ok: false, message: "Проверьте почту и пароль" };
       }
-      const { passwordHash: _, ...safeProfile } = matched;
+      const {
+        passwordHash: storedPasswordHash,
+        ...safeProfile
+      } = matched;
+      void storedPasswordHash;
       setUser(safeProfile);
       return { ok: true, message: "Вход выполнен" };
     },
@@ -211,7 +258,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       toggleCompare,
       register,
       login,
-      loginAsDemoAdmin: () => setUser(demoAdmin),
+      loginAsDemoAdmin: () => setUser(DEMO_ADMIN_USER),
       logout: () => setUser(null),
       saveProduct,
       deleteProduct,

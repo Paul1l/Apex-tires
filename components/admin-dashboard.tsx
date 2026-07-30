@@ -19,7 +19,6 @@ import {
   LogOut,
   Menu,
   Package,
-  PackageCheck,
   Pencil,
   Plus,
   RefreshCw,
@@ -33,12 +32,26 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { FormEvent, useMemo, useRef, useState } from "react";
-import { formatPrice, seasonLabels, seedProducts } from "@/lib/catalog-data";
+import {
+  FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import type { Product, ProductKind, Season } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 
 type Section = "overview" | "products" | "orders" | "sync" | "settings";
+
+interface OneCGatewayHealth {
+  ok: boolean;
+  mode: "active" | "validation-only";
+  secretConfigured: boolean;
+  databaseConfigured: boolean;
+  timestamp: string;
+}
 
 const blankProduct: Product = {
   id: "",
@@ -328,7 +341,7 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
 function OrdersSection() {
   return (
     <>
-      <div className="admin-page-intro"><div><p className="eyebrow">Продажи</p><h1>Заказы</h1><span>Обработка, статусы и выгрузка в 1С</span></div><button className="admin-secondary-button"><Download size={16} /> Выгрузить CSV</button></div>
+      <div className="admin-page-intro"><div><p className="eyebrow">Продажи · демо-данные</p><h1>Заказы</h1><span>Макет обработки и статусов. Реальные заявки пока не сохраняются.</span></div><button className="admin-secondary-button"><Download size={16} /> Выгрузить CSV</button></div>
       <div className="admin-order-stats"><span><b>2</b> новых</span><span><b>6</b> комплектуются</span><span><b>9</b> в доставке</span><span><b>167</b> завершено за месяц</span></div>
       <article className="admin-card">
         <div className="admin-products-toolbar"><label className="admin-search"><Search size={17} /><input placeholder="Номер заказа или клиент" /></label><select><option>Все статусы</option><option>Новый</option><option>Комплектуется</option><option>Доставлен</option></select></div>
@@ -344,6 +357,35 @@ function SyncSection() {
   const { saveProduct } = useStore();
   const fileRef = useRef<HTMLInputElement>(null);
   const [importMessage, setImportMessage] = useState("");
+  const [gatewayHealth, setGatewayHealth] =
+    useState<OneCGatewayHealth | null>(null);
+  const [gatewayCheckFailed, setGatewayCheckFailed] = useState(false);
+  const [gatewayCheckInProgress, setGatewayCheckInProgress] = useState(false);
+
+  async function refreshGatewayHealth() {
+    setGatewayCheckInProgress(true);
+    setGatewayCheckFailed(false);
+
+    try {
+      const healthResponse = await fetch("/api/1c/health", {
+        cache: "no-store",
+      });
+      if (!healthResponse.ok) throw new Error("Gateway health request failed");
+
+      setGatewayHealth(
+        (await healthResponse.json()) as OneCGatewayHealth,
+      );
+    } catch {
+      setGatewayHealth(null);
+      setGatewayCheckFailed(true);
+    } finally {
+      setGatewayCheckInProgress(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshGatewayHealth();
+  }, []);
 
   function importJson(file?: File) {
     if (!file) return;
@@ -369,11 +411,11 @@ function SyncSection() {
 
   return (
     <>
-      <div className="admin-page-intro"><div><p className="eyebrow">Интеграции</p><h1>Обмен с 1С</h1><span>Импорт номенклатуры, цен и остатков. Экспорт заказов.</span></div><button className="admin-primary-button"><RefreshCw size={16} /> Запустить обмен</button></div>
+      <div className="admin-page-intro"><div><p className="eyebrow">Интеграции</p><h1>Обмен с 1С</h1><span>Импорт номенклатуры, цен и остатков. Экспорт заказов.</span></div><button className="admin-primary-button" onClick={() => void refreshGatewayHealth()} disabled={gatewayCheckInProgress}><RefreshCw size={16} /> {gatewayCheckInProgress ? "Проверяем…" : "Проверить шлюз"}</button></div>
       <div className="sync-status-card">
         <div className="sync-orbit"><CloudCog /><span /></div>
-        <div><p className="eyebrow">Статус шлюза</p><h2>Контур подготовлен</h2><p>API доступен, схема данных версионирована. Для production задайте secret <code>ONEC_SHARED_SECRET</code> и подключите D1.</p></div>
-        <span className="sync-ready"><i /> Ожидает настройки</span>
+        <div><p className="eyebrow">Статус шлюза</p><h2>{gatewayHealth?.mode === "active" ? "Синхронизация активна" : gatewayCheckFailed ? "Шлюз недоступен" : "Контур подготовлен"}</h2><p>{gatewayHealth?.mode === "active" ? "Секрет и база подключены. Можно выполнять приемочные тесты с 1С." : "API доступен, но реальный обмен выключен. Нужны secret, production-БД и обработка на стороне вашей 1С."}</p></div>
+        <span className="sync-ready"><i /> {gatewayHealth?.mode === "active" ? "Активен" : "Validation-only"}</span>
       </div>
       <div className="sync-grid">
         <article className="admin-card">
@@ -383,6 +425,7 @@ function SyncSection() {
             <div><span className="method post">POST</span><code>/api/1c/import/products</code><small>Номенклатура и свойства</small></div>
             <div><span className="method post">POST</span><code>/api/1c/import/stock-prices</code><small>Цены и остатки</small></div>
             <div><span className="method get">GET</span><code>/api/1c/orders/export</code><small>Новые заказы для 1С</small></div>
+            <div><span className="method post">POST</span><code>/api/1c/orders/acknowledge</code><small>Подтверждение записи в 1С</small></div>
           </div>
           <div className="token-note"><strong>Авторизация</strong><code>X-1C-Token: ••••••••••••</code><span>Токен хранится как secret, не в коде.</span></div>
         </article>
@@ -395,11 +438,9 @@ function SyncSection() {
         </article>
       </div>
       <article className="admin-card sync-log">
-        <div className="admin-card-head"><div><p className="eyebrow">Журнал</p><h2>Последние операции</h2></div><Activity /></div>
+        <div className="admin-card-head"><div><p className="eyebrow">Журнал</p><h2>Операции появятся после подключения</h2></div><Activity /></div>
         <div className="sync-log-list">
-          <div><span className="log-icon success"><Check /></span><p><strong>Импорт товаров</strong><span>1 248 позиций · создано 12 · обновлено 1 236</span></p><time>Сегодня, 08:00</time><b>42 сек.</b></div>
-          <div><span className="log-icon success"><Check /></span><p><strong>Цены и остатки</strong><span>3 склада · 2 486 записей</span></p><time>Сегодня, 08:01</time><b>18 сек.</b></div>
-          <div><span className="log-icon success"><Check /></span><p><strong>Экспорт заказов</strong><span>18 заказов передано в 1С</span></p><time>Вчера, 22:00</time><b>6 сек.</b></div>
+          <div><span className="log-icon"><CloudCog /></span><p><strong>Рабочих обменов еще не было</strong><span>После настройки записи будут читаться из таблицы sync_runs.</span></p><time>—</time><b>—</b></div>
         </div>
       </article>
     </>
@@ -411,8 +452,8 @@ function SettingsSection() {
     <>
       <div className="admin-page-intro"><div><p className="eyebrow">Конфигурация</p><h1>Настройки</h1><span>Основные параметры магазина и уведомлений</span></div><button className="admin-primary-button"><Check size={17} /> Сохранить</button></div>
       <div className="settings-grid">
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Магазин</p><h2>Общие данные</h2></div><Settings /></div><label><span>Название</span><input defaultValue="APEX WHEELS" /></label><label><span>Телефон</span><input defaultValue="8 800 550-98-87" /></label><label><span>Электронная почта</span><input defaultValue="hello@apex-wheels.ru" /></label><label><span>Город по умолчанию</span><select defaultValue="Москва"><option>Москва</option><option>Санкт-Петербург</option></select></label></article>
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Заказы</p><h2>Бизнес-правила</h2></div><Gauge /></div><label><span>Бесплатная доставка от, ₽</span><input type="number" defaultValue="40000" /></label><label><span>Резерв товара, часов</span><input type="number" defaultValue="24" /></label><label className="settings-switch"><span><strong>Проверка совместимости</strong><small>Блокировать отгрузку до подтверждения</small></span><input type="checkbox" defaultChecked /></label><label className="settings-switch"><span><strong>Экспорт заказов в 1С</strong><small>Автоматически каждые 15 минут</small></span><input type="checkbox" defaultChecked /></label></article>
+        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Магазин</p><h2>Общие данные</h2></div><Settings /></div><label><span>Название</span><input defaultValue="APEX WHEELS" /></label><label><span>Телефон</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Электронная почта</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Город по умолчанию</span><select defaultValue="Москва"><option>Москва</option><option>Санкт-Петербург</option></select></label></article>
+        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Заказы</p><h2>Бизнес-правила</h2></div><Gauge /></div><label><span>Бесплатная доставка от, ₽</span><input type="number" defaultValue="40000" /></label><label><span>Резерв товара, часов</span><input type="number" defaultValue="24" /></label><label className="settings-switch"><span><strong>Проверка совместимости</strong><small>Блокировать отгрузку до подтверждения</small></span><input type="checkbox" defaultChecked /></label><label className="settings-switch"><span><strong>Экспорт заказов в 1С</strong><small>Станет доступен после production-настройки</small></span><input type="checkbox" disabled /></label></article>
       </div>
     </>
   );
@@ -423,7 +464,6 @@ export function AdminDashboard() {
   const [section, setSection] = useState<Section>("overview");
   const [editor, setEditor] = useState<Product | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [notice, setNotice] = useState("");
 
   const navigation = useMemo(
     () => [
@@ -449,7 +489,7 @@ export function AdminDashboard() {
         <div className="admin-sidebar-brand"><span className="admin-brand-mark"><i /><i /><i /></span><strong>APEX</strong><small>CONTROL</small><button onClick={() => setSidebarOpen(false)}><X /></button></div>
         <nav>{navigation.map(({ id, label, icon: Icon, badge }) => <button key={id} className={section === id ? "active" : ""} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{badge && <b>{badge}</b>}</button>)}</nav>
         <div className="admin-sidebar-bottom">
-          <div className="admin-sync-mini"><span><i />1С</span><strong>Синхронизировано</strong><small>сегодня в 08:01</small></div>
+          <div className="admin-sync-mini"><span><i />1С</span><strong>Не подключена</strong><small>API в validation-only</small></div>
           <Link href="/"><ArrowLeft size={17} /> В магазин</Link>
         </div>
       </aside>
@@ -458,7 +498,7 @@ export function AdminDashboard() {
           <button className="admin-mobile-menu" onClick={() => setSidebarOpen(true)}><Menu /></button>
           <div className="admin-breadcrumb">APEX CONTROL <ChevronRight size={13} /> <strong>{navigation.find((item) => item.id === section)?.label}</strong></div>
           <div className="admin-topbar-actions">
-            <button className="admin-sync-button" onClick={() => { setNotice("Синхронизация поставлена в очередь"); setTimeout(() => setNotice(""), 2500); }}><RefreshCw size={16} /> <span>1С: 08:01</span></button>
+            <button className="admin-sync-button" onClick={() => navigate("sync")}><RefreshCw size={16} /> <span>1С: настройка</span></button>
             <button className="admin-user-button"><span>{user.name.slice(0, 1)}</span><p><strong>{user.name}</strong><small>Администратор</small></p></button>
             <button className="admin-logout" onClick={logout} aria-label="Выйти"><LogOut size={18} /></button>
           </div>
@@ -472,7 +512,6 @@ export function AdminDashboard() {
         </div>
       </section>
       {editor && <ProductEditor product={editor} onClose={() => setEditor(null)} />}
-      {notice && <div className="admin-toast"><RefreshCw size={16} /> {notice}</div>}
     </main>
   );
 }
