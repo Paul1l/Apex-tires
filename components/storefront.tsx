@@ -25,7 +25,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { openCookieSettings } from "@/lib/cookie-consent";
 import type {
@@ -57,6 +57,168 @@ const initialFilters: CatalogFilters = {
   query: "",
   sort: "popular",
 };
+
+interface SearchableVehicleOption {
+  id: string;
+  name: string;
+}
+
+interface SearchableVehicleSelectProps {
+  id: string;
+  label: string;
+  value: string;
+  options: SearchableVehicleOption[];
+  placeholder: string;
+  helperText: string;
+  loading?: boolean;
+  disabled?: boolean;
+  onValueChange: (value: string) => void;
+  onOptionSelect: (option: SearchableVehicleOption) => void;
+}
+
+function normalizeVehicleSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase("ru");
+}
+
+/**
+ * Searchable combobox used for vehicle makes and models. Clicking the field
+ * opens the complete scrollable list; typing filters it immediately.
+ */
+function SearchableVehicleSelect({
+  id,
+  label,
+  value,
+  options,
+  placeholder,
+  helperText,
+  loading = false,
+  disabled = false,
+  onValueChange,
+  onOptionSelect,
+}: SearchableVehicleSelectProps) {
+  const containerReference = useRef<HTMLDivElement>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [filterIsActive, setFilterIsActive] = useState(false);
+  const normalizedValue = normalizeVehicleSearchText(value);
+  const exactOptionIsSelected = options.some(
+    (option) => normalizeVehicleSearchText(option.name) === normalizedValue,
+  );
+  const matchingOptions = useMemo(() => {
+    if (!normalizedValue || !filterIsActive) return options;
+
+    return options.filter((option) => {
+      const normalizedOptionName = normalizeVehicleSearchText(option.name);
+      return (
+        normalizedOptionName.startsWith(normalizedValue) ||
+        normalizedOptionName
+          .split(/[\s/-]+/)
+          .some((word) => word.startsWith(normalizedValue))
+      );
+    });
+  }, [filterIsActive, normalizedValue, options]);
+
+  useEffect(() => {
+    function closeWhenClickingOutside(event: MouseEvent) {
+      if (
+        containerReference.current &&
+        !containerReference.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeWhenClickingOutside);
+    return () =>
+      document.removeEventListener("mousedown", closeWhenClickingOutside);
+  }, []);
+
+  function selectOption(option: SearchableVehicleOption) {
+    onOptionSelect(option);
+    setFilterIsActive(false);
+    setIsOpen(false);
+  }
+
+  return (
+    <div className="car-field">
+      <label htmlFor={id}>{label}</label>
+      <div className="vehicle-search-select" ref={containerReference}>
+        <input
+          id={id}
+          value={value}
+          placeholder={placeholder}
+          autoComplete="off"
+          disabled={disabled}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls={`${id}-options`}
+          onFocus={(event) => {
+            setIsOpen(true);
+            setFilterIsActive(false);
+            if (exactOptionIsSelected) {
+              window.requestAnimationFrame(() => event.target.select());
+            }
+          }}
+          onClick={() => setIsOpen(true)}
+          onChange={(event) => {
+            onValueChange(event.target.value);
+            setFilterIsActive(true);
+            setIsOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setIsOpen(false);
+            }
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setIsOpen(true);
+            }
+            if (
+              event.key === "Enter" &&
+              isOpen &&
+              matchingOptions.length === 1
+            ) {
+              event.preventDefault();
+              selectOption(matchingOptions[0]);
+            }
+          }}
+        />
+        {isOpen && !disabled && (
+          <div
+            className="vehicle-options-popover"
+            id={`${id}-options`}
+            role="listbox"
+          >
+            <div className="vehicle-options-summary">
+              {loading
+                ? "Загружаем список…"
+                : `Вариантов: ${matchingOptions.length}`}
+            </div>
+            {!loading &&
+              matchingOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="option"
+                  aria-selected={
+                    normalizeVehicleSearchText(option.name) === normalizedValue
+                  }
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectOption(option)}
+                >
+                  {option.name}
+                </button>
+              ))}
+            {!loading && matchingOptions.length === 0 && (
+              <p>Совпадений нет. Измените запрос или введите название вручную.</p>
+            )}
+          </div>
+        )}
+      </div>
+      <small>{helperText}</small>
+    </div>
+  );
+}
 
 function ProductArt({ product, compact = false }: { product: Product; compact?: boolean }) {
   if (product.image) {
@@ -720,7 +882,7 @@ export function Storefront() {
   const [heroProfile, setHeroProfile] = useState("45");
   const [heroDiameter, setHeroDiameter] = useState("18");
   const [carBrand, setCarBrand] = useState("BMW");
-  const [carModel, setCarModel] = useState("3 Series");
+  const [carModel, setCarModel] = useState("");
   const [carYear, setCarYear] = useState("2024");
   const [carGeneration, setCarGeneration] = useState("");
   const [vehicleMakes, setVehicleMakes] = useState<VehicleMake[]>([]);
@@ -892,6 +1054,8 @@ export function Storefront() {
 
   function updateSelectedCarBrand(nextBrand: string) {
     setCarBrand(nextBrand);
+    setCarModel("");
+    setCarGeneration("");
     const exactMake = vehicleMakes.find(
       (make) =>
         make.name.toLocaleLowerCase("ru") ===
@@ -899,8 +1063,6 @@ export function Storefront() {
     );
     if (exactMake) {
       setCarBrand(exactMake.name);
-      setCarModel("");
-      setCarGeneration("");
     }
   }
 
@@ -1116,58 +1278,57 @@ export function Storefront() {
             ) : (
               <div className="selector-content car-selector">
                 <div className="car-fields">
-                  <label>
-                    <span>Марка</span>
-                    <input
-                      value={carBrand}
-                      onChange={(event) => updateSelectedCarBrand(event.target.value)}
-                      list="vehicle-makes"
-                      placeholder={vehicleMakesLoading ? "Загружаем марки…" : "Начните вводить марку"}
-                      autoComplete="off"
-                    />
-                    <datalist id="vehicle-makes">
-                      {vehicleMakes.map((make) => (
-                        <option key={make.id} value={make.name} />
-                      ))}
-                    </datalist>
-                    <small>
-                      {vehicleMakesLoading
+                  <SearchableVehicleSelect
+                    id="vehicle-make"
+                    label="Марка"
+                    value={carBrand}
+                    options={vehicleMakes}
+                    placeholder={
+                      vehicleMakesLoading
+                        ? "Загружаем марки…"
+                        : "Выберите или начните вводить"
+                    }
+                    helperText={
+                      vehicleMakesLoading
                         ? "Загрузка полного справочника"
                         : selectedMakeIsKnown
                           ? "Марка найдена"
-                          : "Выберите вариант из списка"}
-                    </small>
-                  </label>
-                  <label>
-                    <span>Модель</span>
-                    <input
-                      value={carModel}
-                      onChange={(event) => {
-                        setCarModel(event.target.value);
-                        setCarGeneration("");
-                      }}
-                      list="vehicle-models"
-                      placeholder={
-                        vehicleModelsLoading
-                          ? "Загружаем модели…"
-                          : "Начните вводить модель"
-                      }
-                      autoComplete="off"
-                      disabled={!selectedMakeIsKnown || vehicleModelsLoading}
-                    />
-                    <datalist id="vehicle-models">
-                      {vehicleModels.map((model) => (
-                        <option key={model.id} value={model.name} />
-                      ))}
-                    </datalist>
-                    <small>
-                      {vehicleModelsLoading
+                          : "Введите первую букву для фильтрации"
+                    }
+                    loading={vehicleMakesLoading}
+                    onValueChange={updateSelectedCarBrand}
+                    onOptionSelect={(option) =>
+                      updateSelectedCarBrand(option.name)
+                    }
+                  />
+                  <SearchableVehicleSelect
+                    id="vehicle-model"
+                    label="Модель"
+                    value={carModel}
+                    options={vehicleModels}
+                    placeholder={
+                      vehicleModelsLoading
+                        ? "Загружаем модели…"
+                        : "Выберите или начните вводить"
+                    }
+                    helperText={
+                      vehicleModelsLoading
                         ? "Обновляем список для выбранного года"
                         : vehicleModels.length > 0
                           ? `Найдено моделей: ${vehicleModels.length}`
-                          : "Можно указать модель вручную"}
-                    </small>
-                  </label>
+                          : "Можно указать модель вручную"
+                    }
+                    loading={vehicleModelsLoading}
+                    disabled={!selectedMakeIsKnown || vehicleModelsLoading}
+                    onValueChange={(nextModel) => {
+                      setCarModel(nextModel);
+                      setCarGeneration("");
+                    }}
+                    onOptionSelect={(option) => {
+                      setCarModel(option.name);
+                      setCarGeneration("");
+                    }}
+                  />
                   <label>
                     <span>Год выпуска</span>
                     <select

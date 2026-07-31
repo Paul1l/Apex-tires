@@ -1,4 +1,12 @@
+import { sql } from "drizzle-orm";
 import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const storeSettings = sqliteTable("store_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  description: text("description").notNull().default(""),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
 export const users = sqliteTable(
   "users",

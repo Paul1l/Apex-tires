@@ -1,5 +1,19 @@
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS store_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT OR IGNORE INTO store_settings (key, value, description)
+VALUES (
+  'catalog_initial_capacity',
+  '100',
+  'Количество товарных позиций, подготовленных для первичного наполнения'
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,

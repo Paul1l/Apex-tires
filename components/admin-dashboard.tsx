@@ -40,6 +40,7 @@ import {
   useState,
 } from "react";
 import { formatPrice, seasonLabels } from "@/lib/catalog-data";
+import { INITIAL_CATALOG_CAPACITY } from "@/lib/store-config";
 import type { Product, ProductKind, Season } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 
@@ -289,6 +290,10 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
   const { products, deleteProduct, resetProducts } = useStore();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"all" | ProductKind>("all");
+  const availablePreparedPositions = Math.max(
+    INITIAL_CATALOG_CAPACITY - products.length,
+    0,
+  );
   const visible = products.filter((product) => {
     if (kind !== "all" && product.kind !== kind) return false;
     const haystack = `${product.brand} ${product.model} ${product.sku}`.toLowerCase();
@@ -298,7 +303,7 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
   return (
     <>
       <div className="admin-page-intro">
-        <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{products.length} позиций · изменения сохраняются сразу</span></div>
+        <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{products.length} из {INITIAL_CATALOG_CAPACITY} подготовленных позиций · изменения сохраняются сразу</span></div>
         <button className="admin-primary-button" onClick={() => onEdit({ ...blankProduct })}><Plus size={17} /> Добавить товар</button>
       </div>
       <article className="admin-card products-card">
@@ -332,7 +337,7 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
           </table>
         </div>
         {visible.length === 0 && <div className="admin-empty"><Search /><strong>Товары не найдены</strong><span>Измените запрос или фильтр.</span></div>}
-        <div className="admin-table-footer"><span>Показано {visible.length} из {products.length}</span><button onClick={() => { if (window.confirm("Вернуть исходный демо-каталог?")) resetProducts(); }}>Восстановить демо-данные</button></div>
+        <div className="admin-table-footer"><span>Показано {visible.length} из {products.length} · свободно {availablePreparedPositions} из {INITIAL_CATALOG_CAPACITY}</span><button onClick={() => { if (window.confirm("Вернуть исходный демо-каталог?")) resetProducts(); }}>Восстановить демо-данные</button></div>
       </article>
     </>
   );
