@@ -74,8 +74,8 @@ POST /api/1c/import/stock-prices
   "rows": [
     {
       "externalId": "1C-000001",
-      "warehouseCode": "MSK-N",
-      "warehouseName": "Москва · Север",
+      "warehouseCode": "KEM-MAIN",
+      "warehouseName": "Кемерово · Основной склад",
       "quantity": 12,
       "reserved": 2,
       "price": 18490,
@@ -88,6 +88,34 @@ POST /api/1c/import/stock-prices
 
 До 5000 строк за запрос. Сначала нужно выгрузить номенклатуру: строка с
 неизвестным `externalId` не сможет создать цену или остаток.
+
+## Импорт применяемости
+
+```http
+POST /api/1c/import/fitments
+```
+
+```json
+{
+  "version": "1.0",
+  "syncId": "1c-fitments-20260731-080200",
+  "rows": [
+    {
+      "externalId": "1C-000001",
+      "make": "BMW",
+      "model": "3 Series",
+      "generation": "G20",
+      "yearFrom": 2019,
+      "yearTo": 2026,
+      "isOem": true
+    }
+  ]
+}
+```
+
+До 5000 строк за запрос. Пакет удаляет предыдущую применяемость только для
+затронутых `externalId` и записывает актуальные строки. Сначала нужно загрузить
+товары через `import/products`.
 
 ## Получение заказов
 

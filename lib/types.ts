@@ -59,7 +59,10 @@ export interface CatalogFilters {
   inStock: boolean;
   studded: boolean;
   runflat: boolean;
+  carMake: string;
   carModel: string;
+  carYear: string;
+  carGeneration: string;
   query: string;
   sort: "popular" | "price-asc" | "price-desc" | "rating";
 }

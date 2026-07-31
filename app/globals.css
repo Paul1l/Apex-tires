@@ -570,7 +570,8 @@ img {
 }
 
 .selector-fields select,
-.car-fields select {
+.car-fields select,
+.car-fields input {
   width: 100%;
   height: 49px;
   border: 1px solid var(--line);
@@ -583,8 +584,21 @@ img {
 }
 
 .selector-fields select:focus,
-.car-fields select:focus {
+.car-fields select:focus,
+.car-fields input:focus {
   border-color: var(--sand-dark);
+}
+
+.car-fields input:disabled {
+  cursor: wait;
+  background: #f4f2ed;
+  color: var(--muted);
+}
+
+.car-fields label small {
+  min-height: 13px;
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .field-divider {
@@ -600,6 +614,15 @@ img {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 9px;
+}
+
+.selector-fitment-note {
+  margin: 8px 0 0;
+  border-left: 2px solid var(--sand-dark);
+  padding-left: 9px;
+  color: #61594e;
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .car-fields {
@@ -630,6 +653,11 @@ img {
 
 .selector-submit:hover {
   background: var(--sand-dark);
+}
+
+.selector-submit:disabled {
+  cursor: not-allowed;
+  background: #b9b4aa;
 }
 
 .trust-bar {
@@ -741,6 +769,23 @@ img {
   padding: 12px 16px;
   color: #48623d;
   font-size: 12px;
+}
+
+.active-car-filter > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.active-car-filter > div > span,
+.active-car-filter > div > small {
+  font-size: 10px;
+}
+
+.active-car-filter.fitment-pending {
+  border-color: #e4c884;
+  background: #fff6dc;
+  color: #74591c;
 }
 
 .active-car-filter button {
@@ -4680,6 +4725,21 @@ footer {
 
   .car-fields {
     grid-template-columns: 1fr;
+  }
+
+  .active-car-filter {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .active-car-filter > div {
+    flex: 1;
+  }
+
+  .active-car-filter button {
+    width: 100%;
+    justify-content: flex-start;
+    margin-left: 26px;
   }
 
   .trust-grid {

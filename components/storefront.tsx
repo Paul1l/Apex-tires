@@ -4,8 +4,8 @@ import Link from "next/link";
 import {
   ArrowRight,
   BadgeCheck,
+  Car,
   Check,
-  ChevronDown,
   CircleUserRound,
   GitCompareArrows,
   Heart,
@@ -26,7 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { carCatalog, formatPrice, seasonLabels } from "@/lib/catalog-data";
+import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { openCookieSettings } from "@/lib/cookie-consent";
 import type {
   CatalogFilters,
@@ -35,6 +35,7 @@ import type {
   Season,
   UserProfile,
 } from "@/lib/types";
+import type { VehicleMake, VehicleModel } from "@/lib/vehicle-catalog";
 import { useStore } from "@/components/store-provider";
 
 const initialFilters: CatalogFilters = {
@@ -49,7 +50,10 @@ const initialFilters: CatalogFilters = {
   inStock: true,
   studded: false,
   runflat: false,
+  carMake: "",
   carModel: "",
+  carYear: "",
+  carGeneration: "",
   query: "",
   sort: "popular",
 };
@@ -527,7 +531,7 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
             </div>
             <div className="drawer-summary">
               <div><span>Товары</span><strong>{formatPrice(total)}</strong></div>
-              <div><span>Доставка по Москве</span><strong className="accent-text">Бесплатно</strong></div>
+              <div><span>Доставка по Кемерово</span><strong className="accent-text">Бесплатно</strong></div>
               <div className="summary-total"><span>Итого</span><strong>{formatPrice(total)}</strong></div>
               {!user && <p className="summary-hint">Можно оформить без регистрации. Аккаунт пригодится для истории заказов.</p>}
               <label className="consent-row checkout-consent">
@@ -717,8 +721,13 @@ export function Storefront() {
   const [heroDiameter, setHeroDiameter] = useState("18");
   const [carBrand, setCarBrand] = useState("BMW");
   const [carModel, setCarModel] = useState("3 Series");
-  const [carYear, setCarYear] = useState("2022–2026");
-  const [carGeneration, setCarGeneration] = useState("G20 LCI");
+  const [carYear, setCarYear] = useState("2024");
+  const [carGeneration, setCarGeneration] = useState("");
+  const [vehicleMakes, setVehicleMakes] = useState<VehicleMake[]>([]);
+  const [vehicleModels, setVehicleModels] = useState<VehicleModel[]>([]);
+  const [vehicleMakesLoading, setVehicleMakesLoading] = useState(false);
+  const [vehicleModelsLoading, setVehicleModelsLoading] = useState(false);
+  const [vehicleCatalogMessage, setVehicleCatalogMessage] = useState("");
   const [visible, setVisible] = useState(8);
   const [quickView, setQuickView] = useState<Product | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -739,6 +748,26 @@ export function Storefront() {
     [products],
   );
 
+  const vehicleYears = useMemo(() => {
+    const latestModelYear = new Date().getUTCFullYear() + 1;
+    return Array.from(
+      { length: latestModelYear - 1950 + 1 },
+      (_, index) => String(latestModelYear - index),
+    );
+  }, []);
+
+  const selectedVehicleFitmentCount = useMemo(() => {
+    if (!filters.carMake || !filters.carModel) return 0;
+    const selectedVehicleName =
+      `${filters.carMake} ${filters.carModel}`.trim().toLocaleLowerCase("ru");
+    return products.filter((product) =>
+      product.compatibleCars.some(
+        (compatibleCar) =>
+          compatibleCar.trim().toLocaleLowerCase("ru") === selectedVehicleName,
+      ),
+    ).length;
+  }, [filters.carMake, filters.carModel, products]);
+
   const filteredProducts = useMemo(() => {
     const list = products.filter((product) => {
       if (filters.kind !== "all" && product.kind !== filters.kind) return false;
@@ -752,9 +781,15 @@ export function Storefront() {
       if (filters.studded && !product.studded) return false;
       if (filters.runflat && !product.runflat) return false;
       if (
+        selectedVehicleFitmentCount > 0 &&
+        filters.carMake &&
         filters.carModel &&
         !product.compatibleCars.some(
-          (car) => car === filters.carModel || car.endsWith(` ${filters.carModel}`),
+          (compatibleCar) =>
+            compatibleCar.trim().toLocaleLowerCase("ru") ===
+            `${filters.carMake} ${filters.carModel}`
+              .trim()
+              .toLocaleLowerCase("ru"),
         )
       ) return false;
       if (filters.query) {
@@ -769,10 +804,82 @@ export function Storefront() {
       if (filters.sort === "rating") return b.rating - a.rating;
       return Number(Boolean(b.featured)) - Number(Boolean(a.featured)) || b.reviews - a.reviews;
     });
-  }, [filters, products]);
+  }, [filters, products, selectedVehicleFitmentCount]);
 
-  const carModels = Object.keys(carCatalog[carBrand] || {});
-  const carDetails = carCatalog[carBrand]?.[carModel];
+  const selectedMakeIsKnown = vehicleMakes.some(
+    (make) => make.name.toLocaleLowerCase("ru") === carBrand.toLocaleLowerCase("ru"),
+  );
+
+  useEffect(() => {
+    if (selectorTab !== "car" || vehicleMakes.length > 0) return;
+
+    const abortController = new AbortController();
+    setVehicleMakesLoading(true);
+    setVehicleCatalogMessage("");
+    void fetch("/api/vehicles/makes", {
+      cache: "no-store",
+      signal: abortController.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<{
+          source: string;
+          items: VehicleMake[];
+        }>;
+      })
+      .then((result) => {
+        setVehicleMakes(result.items);
+        setVehicleCatalogMessage(
+          result.source === "regional-fallback"
+            ? "Используется резервный справочник марок."
+            : `Доступно марок: ${result.items.length}.`,
+        );
+      })
+      .catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setVehicleCatalogMessage(
+            "Не удалось загрузить справочник. Попробуйте ещё раз.",
+          );
+        }
+      })
+      .finally(() => setVehicleMakesLoading(false));
+
+    return () => abortController.abort();
+  }, [selectorTab, vehicleMakes.length]);
+
+  useEffect(() => {
+    if (
+      selectorTab !== "car" ||
+      !selectedMakeIsKnown ||
+      !carBrand ||
+      !carYear
+    ) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    setVehicleModelsLoading(true);
+    void fetch(
+      `/api/vehicles/models?make=${encodeURIComponent(carBrand)}&year=${encodeURIComponent(carYear)}`,
+      { cache: "no-store", signal: abortController.signal },
+    )
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<{ items: VehicleModel[] }>;
+      })
+      .then((result) => setVehicleModels(result.items))
+      .catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setVehicleModels([]);
+          setVehicleCatalogMessage(
+            "Модели временно недоступны — можно ввести название вручную.",
+          );
+        }
+      })
+      .finally(() => setVehicleModelsLoading(false));
+
+    return () => abortController.abort();
+  }, [carBrand, carYear, selectedMakeIsKnown, selectorTab]);
 
   function notify(message: string) {
     setToast(message);
@@ -783,6 +890,26 @@ export function Storefront() {
     document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function updateSelectedCarBrand(nextBrand: string) {
+    setCarBrand(nextBrand);
+    const exactMake = vehicleMakes.find(
+      (make) =>
+        make.name.toLocaleLowerCase("ru") ===
+        nextBrand.trim().toLocaleLowerCase("ru"),
+    );
+    if (exactMake) {
+      setCarBrand(exactMake.name);
+      setCarModel("");
+      setCarGeneration("");
+    }
+  }
+
+  function updateSelectedCarYear(nextYear: string) {
+    setCarYear(nextYear);
+    setCarModel("");
+    setCarGeneration("");
+  }
+
   function submitHeroSearch() {
     if (selectorTab === "size") {
       setFilters((current) => ({
@@ -791,12 +918,39 @@ export function Storefront() {
         width: heroKind === "tire" ? heroWidth : "",
         profile: heroKind === "tire" ? heroProfile : "",
         diameter: heroDiameter,
+        carMake: "",
         carModel: "",
+        carYear: "",
+        carGeneration: "",
       }));
       notify("Подбор по размеру применён");
     } else {
-      setFilters((current) => ({ ...current, kind: "all", carModel }));
-      notify(`Показываем товары для ${carBrand} ${carModel}`);
+      if (!selectedMakeIsKnown || !carModel.trim()) {
+        notify("Сначала выберите марку и модель из справочника");
+        return;
+      }
+      setFilters((current) => ({
+        ...current,
+        kind: "all",
+        carMake: carBrand,
+        carModel: carModel.trim(),
+        carYear,
+        carGeneration: carGeneration.trim(),
+      }));
+      const selectedVehicleName =
+        `${carBrand} ${carModel}`.trim().toLocaleLowerCase("ru");
+      const fitmentIsMapped = products.some((product) =>
+        product.compatibleCars.some(
+          (compatibleCar) =>
+            compatibleCar.trim().toLocaleLowerCase("ru") ===
+            selectedVehicleName,
+        ),
+      );
+      notify(
+        fitmentIsMapped
+          ? `Показываем товары для ${carBrand} ${carModel}`
+          : "Автомобиль выбран — размеры будут доступны после загрузки применяемости",
+      );
     }
     setVisible(8);
     scrollToCatalog();
@@ -885,7 +1039,7 @@ export function Storefront() {
     <main>
       <div className="utility-bar">
         <div className="container utility-inner">
-          <div className="utility-location"><MapPin size={14} /> Москва <ChevronDown size={13} /></div>
+          <div className="utility-location"><MapPin size={14} /> Кемерово</div>
           <div className="utility-promise">Бесплатная доставка комплекта от 40 000 ₽</div>
           <div className="utility-links"><span>Для бизнеса</span><span>Доставка и оплата</span><span>Гарантия</span></div>
         </div>
@@ -921,7 +1075,7 @@ export function Storefront() {
           <div className="hero-copy">
             <span className="hero-kicker"><Sparkles size={15} /> Новый уровень подбора</span>
             <h1>Держим<br /><em>дорогу.</em></h1>
-            <p>Точные шины и диски для вашего автомобиля. Гарантия совместимости, доставка завтра.</p>
+            <p>Точные шины и диски для вашего автомобиля. Проверка совместимости и доставка по Кемерово.</p>
             <div className="hero-proof">
               <span><strong>12 лет</strong> экспертизы</span>
               <span><strong>4.9 / 5</strong> рейтинг</span>
@@ -934,7 +1088,7 @@ export function Storefront() {
                 <p className="eyebrow">Умный подбор</p>
                 <h2>Найдём идеальную пару</h2>
               </div>
-              <span className="selector-badge"><BadgeCheck size={16} /> 100% совместимость</span>
+              <span className="selector-badge"><BadgeCheck size={16} /> Проверка по базе</span>
             </div>
             <div className="selector-tabs">
               <button className={selectorTab === "size" ? "active" : ""} onClick={() => setSelectorTab("size")}>По параметрам</button>
@@ -962,15 +1116,99 @@ export function Storefront() {
             ) : (
               <div className="selector-content car-selector">
                 <div className="car-fields">
-                  <label><span>Марка</span><select value={carBrand} onChange={(e) => { const brand = e.target.value; const model = Object.keys(carCatalog[brand])[0]; const details = carCatalog[brand][model]; setCarBrand(brand); setCarModel(model); setCarYear(details.years[0]); setCarGeneration(details.generations[0]); }}>{Object.keys(carCatalog).map((value) => <option key={value}>{value}</option>)}</select></label>
-                  <label><span>Модель</span><select value={carModel} onChange={(e) => { const model = e.target.value; const details = carCatalog[carBrand][model]; setCarModel(model); setCarYear(details.years[0]); setCarGeneration(details.generations[0]); }}>{carModels.map((value) => <option key={value}>{value}</option>)}</select></label>
-                  <label><span>Год</span><select value={carYear} onChange={(e) => setCarYear(e.target.value)}>{carDetails?.years.map((value) => <option key={value}>{value}</option>)}</select></label>
-                  <label><span>Поколение</span><select value={carGeneration} onChange={(e) => setCarGeneration(e.target.value)}>{carDetails?.generations.map((value) => <option key={value}>{value}</option>)}</select></label>
+                  <label>
+                    <span>Марка</span>
+                    <input
+                      value={carBrand}
+                      onChange={(event) => updateSelectedCarBrand(event.target.value)}
+                      list="vehicle-makes"
+                      placeholder={vehicleMakesLoading ? "Загружаем марки…" : "Начните вводить марку"}
+                      autoComplete="off"
+                    />
+                    <datalist id="vehicle-makes">
+                      {vehicleMakes.map((make) => (
+                        <option key={make.id} value={make.name} />
+                      ))}
+                    </datalist>
+                    <small>
+                      {vehicleMakesLoading
+                        ? "Загрузка полного справочника"
+                        : selectedMakeIsKnown
+                          ? "Марка найдена"
+                          : "Выберите вариант из списка"}
+                    </small>
+                  </label>
+                  <label>
+                    <span>Модель</span>
+                    <input
+                      value={carModel}
+                      onChange={(event) => {
+                        setCarModel(event.target.value);
+                        setCarGeneration("");
+                      }}
+                      list="vehicle-models"
+                      placeholder={
+                        vehicleModelsLoading
+                          ? "Загружаем модели…"
+                          : "Начните вводить модель"
+                      }
+                      autoComplete="off"
+                      disabled={!selectedMakeIsKnown || vehicleModelsLoading}
+                    />
+                    <datalist id="vehicle-models">
+                      {vehicleModels.map((model) => (
+                        <option key={model.id} value={model.name} />
+                      ))}
+                    </datalist>
+                    <small>
+                      {vehicleModelsLoading
+                        ? "Обновляем список для выбранного года"
+                        : vehicleModels.length > 0
+                          ? `Найдено моделей: ${vehicleModels.length}`
+                          : "Можно указать модель вручную"}
+                    </small>
+                  </label>
+                  <label>
+                    <span>Год выпуска</span>
+                    <select
+                      value={carYear}
+                      onChange={(event) => updateSelectedCarYear(event.target.value)}
+                    >
+                      {vehicleYears.map((year) => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Поколение / кузов</span>
+                    <input
+                      value={carGeneration}
+                      onChange={(event) => setCarGeneration(event.target.value)}
+                      placeholder="Необязательно"
+                    />
+                    <small>Например: G20, XV70 или рестайлинг</small>
+                  </label>
                 </div>
-                <p className="selector-hint">Каталог учитывает заводские размеры и допустимые альтернативы.</p>
+                <p className="selector-hint">
+                  {vehicleCatalogMessage ||
+                    "Марки и модели загружаются из автомобильного справочника."}
+                </p>
+                <p className="selector-fitment-note">
+                  Точная применяемость шин и дисков появится после загрузки таблицы
+                  соответствий из 1С.
+                </p>
               </div>
             )}
-            <button className="selector-submit" onClick={submitHeroSearch}><Search size={19} /> Показать подходящие <ArrowRight size={18} /></button>
+            <button
+              className="selector-submit"
+              onClick={submitHeroSearch}
+              disabled={
+                selectorTab === "car" &&
+                (!selectedMakeIsKnown || !carModel.trim() || vehicleModelsLoading)
+              }
+            >
+              <Search size={19} /> Показать подходящие <ArrowRight size={18} />
+            </button>
           </div>
         </div>
       </section>
@@ -978,7 +1216,7 @@ export function Storefront() {
       <section className="trust-bar">
         <div className="container trust-grid">
           <div><span><ShieldCheck /></span><p><strong>Гарантия совместимости</strong>Проверим каждую позицию</p></div>
-          <div><span><Truck /></span><p><strong>Доставка завтра</strong>По Москве и области</p></div>
+          <div><span><Truck /></span><p><strong>Доставка по Кемерово</strong>Срок подтвердит менеджер</p></div>
           <div><span><Wrench /></span><p><strong>Монтаж без очереди</strong>Запись вместе с заказом</p></div>
           <div><span><PackageCheck /></span><p><strong>90 дней на возврат</strong>Если товар не устанавливался</p></div>
         </div>
@@ -998,10 +1236,46 @@ export function Storefront() {
             </div>
           </div>
           {filters.carModel && (
-            <div className="active-car-filter">
-              <BadgeCheck size={18} />
-              Подходит для <strong>{carBrand} {filters.carModel}</strong>
-              <button onClick={() => setFilters((f) => ({ ...f, carModel: "" }))}><X size={15} /> Сбросить</button>
+            <div
+              className={`active-car-filter ${
+                selectedVehicleFitmentCount === 0 ? "fitment-pending" : ""
+              }`}
+            >
+              {selectedVehicleFitmentCount > 0 ? (
+                <BadgeCheck size={18} />
+              ) : (
+                <Car size={18} />
+              )}
+              <div>
+                <span>
+                  {selectedVehicleFitmentCount > 0
+                    ? "Подбор по применяемости"
+                    : "Автомобиль выбран"}
+                </span>
+                <strong>
+                  {filters.carMake} {filters.carModel}
+                  {filters.carYear ? `, ${filters.carYear}` : ""}
+                  {filters.carGeneration ? `, ${filters.carGeneration}` : ""}
+                </strong>
+                {selectedVehicleFitmentCount === 0 && (
+                  <small>
+                    Размеры будут отфильтрованы после загрузки применяемости из 1С.
+                  </small>
+                )}
+              </div>
+              <button
+                onClick={() =>
+                  setFilters((current) => ({
+                    ...current,
+                    carMake: "",
+                    carModel: "",
+                    carYear: "",
+                    carGeneration: "",
+                  }))
+                }
+              >
+                <X size={15} /> Сбросить
+              </button>
             </div>
           )}
           <div className="catalog-layout">
@@ -1092,7 +1366,7 @@ export function Storefront() {
         <div className="container footer-grid">
           <div className="footer-brand">
             <Link href="/" className="brand-logo light"><span className="logo-mark"><i /><i /><i /></span><span>APEX<small>WHEELS</small></span></Link>
-            <p>Шины и диски с гарантией совместимости. Москва и вся Россия.</p>
+            <p>Шины и диски с проверкой совместимости. Работаем только в Кемерово.</p>
             <strong>8 800 550-98-87</strong>
             <span>Ежедневно с 9:00 до 21:00</span>
           </div>

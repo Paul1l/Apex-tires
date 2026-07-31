@@ -58,6 +58,33 @@ const stockAndPriceImportSchema = z.object({
     .max(5000),
 });
 
+const fitmentRowSchema = z
+  .object({
+    externalId: z.string().min(1),
+    make: z.string().min(1).max(100),
+    model: z.string().min(1).max(150),
+    generation: z.string().max(100).optional(),
+    yearFrom: z.number().int().min(1950).max(2100).optional(),
+    yearTo: z.number().int().min(1950).max(2100).optional(),
+    isOem: z.boolean().default(false),
+  })
+  .refine(
+    (fitment) =>
+      fitment.yearFrom === undefined ||
+      fitment.yearTo === undefined ||
+      fitment.yearFrom <= fitment.yearTo,
+    {
+      message: "yearFrom must not be greater than yearTo",
+      path: ["yearTo"],
+    },
+  );
+
+const fitmentImportSchema = z.object({
+  version: z.literal("1.0"),
+  syncId: z.string().min(1),
+  rows: z.array(fitmentRowSchema).max(5000),
+});
+
 const orderAcknowledgementSchema = z.object({
   version: z.literal("1.0"),
   syncId: z.string().min(1),
@@ -390,7 +417,8 @@ export async function GET(
 }
 
 /**
- * Product, stock, price and order acknowledgement endpoints used by 1C.
+ * Product, stock, price, vehicle fitment and order acknowledgement endpoints
+ * used by 1C.
  */
 export async function POST(
   request: NextRequest,
@@ -615,6 +643,100 @@ export async function POST(
       synchronizationId: syncId,
       direction: "import",
       entity: "stock-prices",
+      processedRecords: rows.length,
+      startedAt: synchronizationStartedAt,
+    });
+
+    return NextResponse.json({
+      ok: true,
+      syncId,
+      accepted: rows.length,
+      persisted: rows.length,
+    });
+  }
+
+  if (requestedAction === "import/fitments") {
+    const validationResult = fitmentImportSchema.safeParse(requestBody);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "VALIDATION_ERROR",
+          issues: validationResult.error.flatten(),
+        },
+        { status: 422 },
+      );
+    }
+
+    const { rows, syncId } = validationResult.data;
+    const database = authorization.runtimeEnvironment.DB;
+    if (!database) {
+      return NextResponse.json(
+        {
+          ok: true,
+          mode: "validation-only",
+          syncId,
+          accepted: rows.length,
+          persisted: 0,
+          message:
+            "Payload is valid. Add the DB binding to enable persistence.",
+        },
+        { status: 202 },
+      );
+    }
+
+    if (await synchronizationWasCompleted(database, syncId)) {
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        syncId,
+        accepted: rows.length,
+        persisted: 0,
+      });
+    }
+
+    const synchronizationStartedAt = new Date().toISOString();
+    const affectedExternalIds = Array.from(
+      new Set(rows.map((fitment) => fitment.externalId)),
+    );
+    const deletePreviousFitments = affectedExternalIds.map((externalId) =>
+      database
+        .prepare(
+          `DELETE FROM fitments
+           WHERE product_id IN (
+             SELECT id FROM products WHERE external_id = ?
+           )`,
+        )
+        .bind(externalId),
+    );
+    const insertCurrentFitments = rows.map((fitment) =>
+      database
+        .prepare(
+          `INSERT INTO fitments (
+            id, product_id, make, model, generation, year_from, year_to, is_oem
+          )
+          SELECT ?, id, ?, ?, ?, ?, ?, ?
+          FROM products
+          WHERE external_id = ?`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          fitment.make,
+          fitment.model,
+          fitment.generation || null,
+          fitment.yearFrom ?? null,
+          fitment.yearTo ?? null,
+          Number(fitment.isOem),
+          fitment.externalId,
+        ),
+    );
+
+    await executeStatementsInChunks(database, deletePreviousFitments);
+    await executeStatementsInChunks(database, insertCurrentFitments);
+    await recordSuccessfulSynchronization(database, {
+      synchronizationId: syncId,
+      direction: "import",
+      entity: "fitments",
       processedRecords: rows.length,
       startedAt: synchronizationStartedAt,
     });

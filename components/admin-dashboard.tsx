@@ -69,7 +69,7 @@ const blankProduct: Product = {
   price: 0,
   stock: 0,
   reserved: 0,
-  warehouse: "Москва · Север",
+  warehouse: "Кемерово · Основной склад",
   rating: 5,
   reviews: 0,
   tags: [],
@@ -217,7 +217,7 @@ function ProductEditor({
             <label><span>Старая цена, ₽</span><input type="number" min="0" value={draft.oldPrice || ""} onChange={(e) => update("oldPrice", e.target.value ? Number(e.target.value) : undefined)} /></label>
             <label><span>Остаток</span><input type="number" min="0" value={draft.stock} onChange={(e) => update("stock", Number(e.target.value))} /></label>
             <label><span>Резерв</span><input type="number" min="0" value={draft.reserved} onChange={(e) => update("reserved", Number(e.target.value))} /></label>
-            <label><span>Склад</span><select value={draft.warehouse} onChange={(e) => update("warehouse", e.target.value)}><option>Москва · Север</option><option>Москва · Юг</option><option>Москва · Запад</option></select></label>
+            <label><span>Склад</span><select value={draft.warehouse} onChange={(e) => update("warehouse", e.target.value)}><option>Кемерово · Основной склад</option></select></label>
             <label><span>Страна</span><input value={draft.country} onChange={(e) => update("country", e.target.value)} /></label>
             <label className="wide"><span>Совместимые модели — через запятую</span><input value={draft.compatibleCars.join(", ")} onChange={(e) => update("compatibleCars", e.target.value.split(",").map((value) => value.trim()).filter(Boolean))} placeholder="BMW 3 Series, Audi A4" /></label>
           </div>
@@ -452,7 +452,7 @@ function SettingsSection() {
     <>
       <div className="admin-page-intro"><div><p className="eyebrow">Конфигурация</p><h1>Настройки</h1><span>Основные параметры магазина и уведомлений</span></div><button className="admin-primary-button"><Check size={17} /> Сохранить</button></div>
       <div className="settings-grid">
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Магазин</p><h2>Общие данные</h2></div><Settings /></div><label><span>Название</span><input defaultValue="APEX WHEELS" /></label><label><span>Телефон</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Электронная почта</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Город по умолчанию</span><select defaultValue="Москва"><option>Москва</option><option>Санкт-Петербург</option></select></label></article>
+        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Магазин</p><h2>Общие данные</h2></div><Settings /></div><label><span>Название</span><input defaultValue="APEX WHEELS" /></label><label><span>Телефон</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Электронная почта</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Город работы</span><select defaultValue="Кемерово"><option>Кемерово</option></select></label></article>
         <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Заказы</p><h2>Бизнес-правила</h2></div><Gauge /></div><label><span>Бесплатная доставка от, ₽</span><input type="number" defaultValue="40000" /></label><label><span>Резерв товара, часов</span><input type="number" defaultValue="24" /></label><label className="settings-switch"><span><strong>Проверка совместимости</strong><small>Блокировать отгрузку до подтверждения</small></span><input type="checkbox" defaultChecked /></label><label className="settings-switch"><span><strong>Экспорт заказов в 1С</strong><small>Станет доступен после production-настройки</small></span><input type="checkbox" disabled /></label></article>
       </div>
     </>

@@ -19,7 +19,7 @@ const unbounded = Unbounded({
 export const metadata: Metadata = {
   title: "Apex Wheels — шины и диски",
   description:
-    "Премиальный подбор шин и дисков по параметрам и автомобилю. Доставка, шиномонтаж и гарантия совместимости.",
+    "Премиальный подбор шин и дисков по параметрам и автомобилю в Кемерово. Доставка, шиномонтаж и проверка совместимости.",
 };
 
 export default function RootLayout({
