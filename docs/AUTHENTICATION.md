@@ -33,8 +33,9 @@ Postbox предназначен для транзакционных писем 
 - https://yandex.cloud/ru/docs/postbox/pricing
 - https://yandex.cloud/ru/docs/postbox/operations/send-email
 
-Интеграция использует AWS SES v2 SDK с endpoint
-`https://postbox.cloud.yandex.net` и регионом `ru-central1`.
+Интеграция подписывает HTTP-запрос встроенным Web Crypto по AWS Signature
+Version 4 и отправляет его на endpoint `https://postbox.cloud.yandex.net` с
+регионом `ru-central1`. Внешний серверный SDK для этого не нужен.
 
 ## Переменные окружения
 
