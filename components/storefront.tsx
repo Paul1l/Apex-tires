@@ -210,7 +210,7 @@ function SearchableVehicleSelect({
                 </button>
               ))}
             {!loading && matchingOptions.length === 0 && (
-              <p>Совпадений нет. Измените запрос или введите название вручную.</p>
+              <p>Совпадений нет. Измените запрос и выберите вариант из списка.</p>
             )}
           </div>
         )}
@@ -971,6 +971,11 @@ export function Storefront() {
   const selectedMakeIsKnown = vehicleMakes.some(
     (make) => make.name.toLocaleLowerCase("ru") === carBrand.toLocaleLowerCase("ru"),
   );
+  const selectedModelIsKnown = vehicleModels.some(
+    (model) =>
+      model.name.toLocaleLowerCase("ru") ===
+      carModel.trim().toLocaleLowerCase("ru"),
+  );
 
   useEffect(() => {
     if (selectorTab !== "car" || vehicleMakes.length > 0) return;
@@ -1034,7 +1039,7 @@ export function Storefront() {
         if ((error as { name?: string }).name !== "AbortError") {
           setVehicleModels([]);
           setVehicleCatalogMessage(
-            "Модели временно недоступны — можно ввести название вручную.",
+            "Модели временно недоступны — попробуйте выбрать год ещё раз.",
           );
         }
       })
@@ -1087,7 +1092,7 @@ export function Storefront() {
       }));
       notify("Подбор по размеру применён");
     } else {
-      if (!selectedMakeIsKnown || !carModel.trim()) {
+      if (!selectedMakeIsKnown || !selectedModelIsKnown) {
         notify("Сначала выберите марку и модель из справочника");
         return;
       }
@@ -1314,9 +1319,11 @@ export function Storefront() {
                     helperText={
                       vehicleModelsLoading
                         ? "Обновляем список для выбранного года"
+                        : selectedModelIsKnown
+                          ? "Модель выбрана"
                         : vehicleModels.length > 0
-                          ? `Найдено моделей: ${vehicleModels.length}`
-                          : "Можно указать модель вручную"
+                          ? `Выберите одну из ${vehicleModels.length} моделей`
+                          : "Для этого года модели не найдены"
                     }
                     loading={vehicleModelsLoading}
                     disabled={!selectedMakeIsKnown || vehicleModelsLoading}
@@ -1365,7 +1372,9 @@ export function Storefront() {
               onClick={submitHeroSearch}
               disabled={
                 selectorTab === "car" &&
-                (!selectedMakeIsKnown || !carModel.trim() || vehicleModelsLoading)
+                (!selectedMakeIsKnown ||
+                  !selectedModelIsKnown ||
+                  vehicleModelsLoading)
               }
             >
               <Search size={19} /> Показать подходящие <ArrowRight size={18} />
