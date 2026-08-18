@@ -693,7 +693,7 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
             </div>
             <div className="drawer-summary">
               <div><span>Товары</span><strong>{formatPrice(total)}</strong></div>
-              <div><span>Доставка по Кемерово</span><strong className="accent-text">Бесплатно</strong></div>
+              <div><span>Доставка по Барнаулу</span><strong className="accent-text">Бесплатно</strong></div>
               <div className="summary-total"><span>Итого</span><strong>{formatPrice(total)}</strong></div>
               {!user && <p className="summary-hint">Можно оформить без регистрации. Аккаунт пригодится для истории заказов.</p>}
               <label className="consent-row checkout-consent">
@@ -1206,7 +1206,7 @@ export function Storefront() {
     <main>
       <div className="utility-bar">
         <div className="container utility-inner">
-          <div className="utility-location"><MapPin size={14} /> Кемерово</div>
+          <div className="utility-location"><MapPin size={14} /> Барнаул</div>
           <div className="utility-promise">Бесплатная доставка комплекта от 40 000 ₽</div>
           <div className="utility-links"><span>Для бизнеса</span><span>Доставка и оплата</span><span>Гарантия</span></div>
         </div>
@@ -1242,7 +1242,7 @@ export function Storefront() {
           <div className="hero-copy">
             <span className="hero-kicker"><Sparkles size={15} /> Новый уровень подбора</span>
             <h1>Держим<br /><em>дорогу.</em></h1>
-            <p>Точные шины и диски для вашего автомобиля. Проверка совместимости и доставка по Кемерово.</p>
+            <p>Точные шины и диски для вашего автомобиля. Проверка совместимости и доставка по Барнаулу.</p>
             <div className="hero-proof">
               <span><strong>12 лет</strong> экспертизы</span>
               <span><strong>4.9 / 5</strong> рейтинг</span>
@@ -1386,7 +1386,7 @@ export function Storefront() {
       <section className="trust-bar">
         <div className="container trust-grid">
           <div><span><ShieldCheck /></span><p><strong>Гарантия совместимости</strong>Проверим каждую позицию</p></div>
-          <div><span><Truck /></span><p><strong>Доставка по Кемерово</strong>Срок подтвердит менеджер</p></div>
+          <div><span><Truck /></span><p><strong>Доставка по Барнаулу</strong>Срок подтвердит менеджер</p></div>
           <div><span><Wrench /></span><p><strong>Монтаж без очереди</strong>Запись вместе с заказом</p></div>
           <div><span><PackageCheck /></span><p><strong>90 дней на возврат</strong>Если товар не устанавливался</p></div>
         </div>
@@ -1536,7 +1536,7 @@ export function Storefront() {
         <div className="container footer-grid">
           <div className="footer-brand">
             <Link href="/" className="brand-logo light"><span className="logo-mark"><i /><i /><i /></span><span>APEX<small>WHEELS</small></span></Link>
-            <p>Шины и диски с проверкой совместимости. Работаем только в Кемерово.</p>
+            <p>Шины и диски с проверкой совместимости. Работаем только в Барнауле.</p>
             <strong>8 800 550-98-87</strong>
             <span>Ежедневно с 9:00 до 21:00</span>
           </div>

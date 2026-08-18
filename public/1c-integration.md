@@ -75,7 +75,7 @@ POST /api/1c/import/stock-prices
     {
       "externalId": "1C-000001",
       "warehouseCode": "KEM-MAIN",
-      "warehouseName": "Кемерово · Основной склад",
+      "warehouseName": "Барнаул · Основной склад",
       "quantity": 12,
       "reserved": 2,
       "price": 18490,
