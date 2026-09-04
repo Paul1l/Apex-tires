@@ -1,3 +1,5 @@
+import { sortVehiclesByName } from "@/lib/vehicle-name-sorting";
+
 export interface VehicleMake {
   id: string;
   name: string;
@@ -7,47 +9,6 @@ export interface VehicleModel {
   id: string;
   name: string;
 }
-
-const PREFERRED_MAKE_ORDER = [
-  "LADA",
-  "MOSKVICH",
-  "UAZ",
-  "GAZ",
-  "AURUS",
-  "TOYOTA",
-  "BMW",
-  "MERCEDES-BENZ",
-  "AUDI",
-  "VOLKSWAGEN",
-  "KIA",
-  "HYUNDAI",
-  "SKODA",
-  "RENAULT",
-  "NISSAN",
-  "MITSUBISHI",
-  "MAZDA",
-  "HONDA",
-  "FORD",
-  "CHEVROLET",
-  "VOLVO",
-  "LAND ROVER",
-  "LEXUS",
-  "SUBARU",
-  "PORSCHE",
-  "CHERY",
-  "EXEED",
-  "OMODA",
-  "JAECOO",
-  "HAVAL",
-  "TANK",
-  "GEELY",
-  "CHANGAN",
-  "GAC",
-  "HONGQI",
-  "LI AUTO",
-  "ZEEKR",
-  "BYD",
-];
 
 const DISPLAY_MAKE_NAMES: Record<string, string> = {
   BMW: "BMW",
@@ -237,22 +198,11 @@ export function getSupplementalVehicleMakes(): VehicleMake[] {
 }
 
 export function sortVehicleMakes(makes: VehicleMake[]): VehicleMake[] {
-  const preferredPositions = new Map(
-    PREFERRED_MAKE_ORDER.map((makeName, index) => [makeName, index]),
-  );
+  return sortVehiclesByName(makes);
+}
 
-  return [...makes].sort((firstMake, secondMake) => {
-    const firstPosition =
-      preferredPositions.get(normalizeVehicleMakeName(firstMake.name)) ??
-      Number.MAX_SAFE_INTEGER;
-    const secondPosition =
-      preferredPositions.get(normalizeVehicleMakeName(secondMake.name)) ??
-      Number.MAX_SAFE_INTEGER;
-    if (firstPosition !== secondPosition) {
-      return firstPosition - secondPosition;
-    }
-    return firstMake.name.localeCompare(secondMake.name, "ru");
-  });
+export function sortVehicleModels(models: VehicleModel[]): VehicleModel[] {
+  return sortVehiclesByName(models);
 }
 
 export function getSupplementalModelsForMake(makeName: string): VehicleModel[] {

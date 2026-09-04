@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getSupplementalModelsForMake,
   normalizeVehicleMakeName,
+  sortVehicleModels,
   type VehicleModel,
 } from "@/lib/vehicle-catalog";
 
@@ -29,12 +30,7 @@ function mergeVehicleModels(
     const normalizedName = model.name.trim().toLocaleLowerCase("ru");
     uniqueModels.set(normalizedName, model);
   }
-  return Array.from(uniqueModels.values()).sort((firstModel, secondModel) =>
-    firstModel.name.localeCompare(secondModel.name, "ru", {
-      numeric: true,
-      sensitivity: "base",
-    }),
-  );
+  return sortVehicleModels(Array.from(uniqueModels.values()));
 }
 
 /**
@@ -123,7 +119,7 @@ export async function GET(request: NextRequest) {
         source: "regional-fallback",
         make: makeName,
         year: requestedYear,
-        items: supplementalModels,
+        items: sortVehicleModels(supplementalModels),
       },
       {
         headers: {

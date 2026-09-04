@@ -37,6 +37,7 @@ import type {
   UserProfile,
 } from "@/lib/types";
 import type { VehicleMake, VehicleModel } from "@/lib/vehicle-catalog";
+import { sortVehiclesByName } from "@/lib/vehicle-name-sorting";
 import { useStore } from "@/components/store-provider";
 
 const initialFilters: CatalogFilters = {
@@ -104,10 +105,14 @@ function SearchableVehicleSelect({
   const exactOptionIsSelected = options.some(
     (option) => normalizeVehicleSearchText(option.name) === normalizedValue,
   );
+  const alphabetizedOptions = useMemo(
+    () => sortVehiclesByName(options),
+    [options],
+  );
   const matchingOptions = useMemo(() => {
-    if (!normalizedValue || !filterIsActive) return options;
+    if (!normalizedValue || !filterIsActive) return alphabetizedOptions;
 
-    return options.filter((option) => {
+    return alphabetizedOptions.filter((option) => {
       const normalizedOptionName = normalizeVehicleSearchText(option.name);
       return (
         normalizedOptionName.startsWith(normalizedValue) ||
@@ -116,7 +121,7 @@ function SearchableVehicleSelect({
           .some((word) => word.startsWith(normalizedValue))
       );
     });
-  }, [filterIsActive, normalizedValue, options]);
+  }, [alphabetizedOptions, filterIsActive, normalizedValue]);
 
   useEffect(() => {
     function closeWhenClickingOutside(event: MouseEvent) {
