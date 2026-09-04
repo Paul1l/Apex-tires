@@ -28,6 +28,7 @@ import {
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { openCookieSettings } from "@/lib/cookie-consent";
+import { CheckoutForm } from "@/components/checkout-form";
 import type {
   CatalogFilters,
   Product,
@@ -366,7 +367,7 @@ function Overlay({
 }
 
 function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { authenticateUser, loginAsDemoAdmin } = useStore();
+  const { authenticateUser } = useStore();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
@@ -615,15 +616,6 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             </div>
           </form>
         )}
-        <button
-          className="demo-admin-button"
-          onClick={() => {
-            loginAsDemoAdmin();
-            onClose();
-          }}
-        >
-          <Sparkles size={16} /> Войти в демо-админку
-        </button>
         <p className="privacy-note">
           Как мы защищаем данные — в{" "}
           <Link href="/legal/privacy">политике конфиденциальности</Link>.
@@ -636,13 +628,17 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => void; notify: (m: string) => void }) {
   const { cart, products, setCartQuantity, clearCart, user } = useStore();
   const [ordered, setOrdered] = useState(false);
+  const [orderNumber, setOrderNumber] = useState("");
   const lines = cart
     .map((line) => ({ ...line, product: products.find((item) => item.id === line.productId) }))
     .filter((line): line is typeof line & { product: Product } => Boolean(line.product));
   const total = lines.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
 
   useEffect(() => {
-    if (!open) setOrdered(false);
+    if (!open) {
+      setOrdered(false);
+      setOrderNumber("");
+    }
   }, [open]);
 
   return (
@@ -659,7 +655,7 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
           <div className="success-state">
             <span><Check size={30} /></span>
             <h3>Заказ принят</h3>
-            <p>Менеджер проверит совместимость и свяжется с вами в течение 15 минут.</p>
+            <p>{orderNumber ? `Номер ${orderNumber}. ` : ""}Менеджер проверит совместимость и свяжется с вами.</p>
             <button className="primary-button" onClick={onClose}>Вернуться в каталог</button>
           </div>
         ) : lines.length === 0 ? (
@@ -696,43 +692,19 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
               <div><span>Доставка по Барнаулу</span><strong className="accent-text">Бесплатно</strong></div>
               <div className="summary-total"><span>Итого</span><strong>{formatPrice(total)}</strong></div>
               {!user && <p className="summary-hint">Можно оформить без регистрации. Аккаунт пригодится для истории заказов.</p>}
-              <label className="consent-row checkout-consent">
-                <input form="apex-demo-order" type="checkbox" required />
-                <span>
-                  Принимаю{" "}
-                  <Link href="/legal/offer" target="_blank">
-                    публичную оферту
-                  </Link>{" "}
-                  и{" "}
-                  <Link href="/legal/delivery-payment-returns" target="_blank">
-                    условия доставки и возврата
-                  </Link>
-                  .
-                </span>
-              </label>
-              <label className="consent-row checkout-consent">
-                <input form="apex-demo-order" type="checkbox" required />
-                <span>
-                  Даю отдельное{" "}
-                  <Link href="/legal/personal-data-consent" target="_blank">
-                    согласие на обработку персональных данных
-                  </Link>
-                  .
-                </span>
-              </label>
-              <form
-                id="apex-demo-order"
-                onSubmit={(event) => {
-                  event.preventDefault();
+              <CheckoutForm
+                user={user}
+                items={lines.map(({ product, quantity }) => ({
+                  productId: product.id,
+                  quantity,
+                }))}
+                onSuccess={(number) => {
+                  setOrderNumber(number);
                   setOrdered(true);
                   clearCart();
-                  notify("Заказ передан менеджеру");
+                  notify(`Заказ ${number} сохранен`);
                 }}
-              >
-                <button className="primary-button full" type="submit">
-                  Оформить заказ <ArrowRight size={17} />
-                </button>
-              </form>
+              />
               <button className="clear-button" onClick={clearCart}>Очистить корзину</button>
             </div>
           </>

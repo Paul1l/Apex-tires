@@ -1,157 +1,63 @@
-# APEX WHEELS — контракт обмена с 1С
+# APEX WHEELS — контракт обмена с 1С v1
 
-Версия контракта: `1.0`
-
-> Сейчас опубликованный стенд работает в режиме `validation-only`: токен и
-> база данных не подключены. Это API-контур, а не активная синхронизация.
+Реальная 1С пока не подключена. Этот документ описывает подготовленный
+HTTPS/JSON API серверного слоя Next.js с PostgreSQL.
 
 ## Авторизация
 
-Все методы, кроме `GET /api/1c/health`, требуют:
+Все методы требуют серверный заголовок:
 
 ```http
-X-1C-Token: <ONEC_SHARED_SECRET>
-Content-Type: application/json
+X-Integration-Key: <INTEGRATION_API_KEY>
 ```
 
-Токен задается как production secret `ONEC_SHARED_SECRET` и не хранится в
-репозитории.
+Ключ нельзя помещать во frontend или репозиторий.
 
-## Проверка
+## Методы
 
-```http
-GET /api/1c/health
-```
+- `GET /api/integrations/1c/v1/health`
+- `POST /api/integrations/1c/v1/products/batch`
+- `POST /api/integrations/1c/v1/prices/batch`
+- `POST /api/integrations/1c/v1/stocks/batch`
+- `POST /api/integrations/1c/v1/fitments/batch`
+- `GET /api/integrations/1c/v1/orders?limit=100`
+- `POST /api/integrations/1c/v1/order-statuses/batch`
 
-Поле `mode` имеет значение `active` только когда настроены и токен, и база.
-
-## Импорт номенклатуры
-
-```http
-POST /api/1c/import/products
-```
+## Общий batch
 
 ```json
 {
-  "version": "1.0",
-  "syncId": "1c-products-20260731-080000",
-  "products": [
+  "apiVersion": "1.0",
+  "idempotencyKey": "products-2026-09-04T10:00:00Z",
+  "mode": "incremental",
+  "changedSince": "2026-09-04T09:00:00+07:00",
+  "items": []
+}
+```
+
+Один пакет содержит до 5 000 записей. Повтор завершенного пакета с тем же
+`idempotencyKey` не создает дубликаты. Полный формат полей, правила retry,
+заказов, изображений и данные, необходимые от заказчика, находятся в
+`docs/1C_REST_INTEGRATION.md` исходного репозитория.
+
+## Результат
+
+```json
+{
+  "ok": false,
+  "idempotencyKey": "products-2026-09-04T10:00:00Z",
+  "processed": 95,
+  "failed": 5,
+  "errors": [
     {
-      "externalId": "1C-000001",
-      "sku": "T-MI-PS5-2254518",
-      "kind": "tire",
-      "brand": "Michelin",
-      "model": "Pilot Sport 5",
-      "subtitle": "225/45 R18 95Y XL",
-      "width": 225,
-      "profile": 45,
-      "diameter": 18,
-      "season": "summer",
-      "studded": false,
-      "runflat": false,
-      "country": "Франция",
-      "tags": ["XL"],
-      "isActive": true,
-      "isFeatured": true
+      "index": 12,
+      "externalId": "product-guid",
+      "code": "VALIDATION_ERROR",
+      "message": "Запись не соответствует контракту."
     }
   ]
 }
 ```
 
-До 1000 товаров за запрос. Повторный `externalId` обновляет товар. Один и тот
-же успешно обработанный `syncId` повторно не изменяет данные.
-
-## Импорт цен и остатков
-
-```http
-POST /api/1c/import/stock-prices
-```
-
-```json
-{
-  "version": "1.0",
-  "syncId": "1c-stock-20260731-080100",
-  "rows": [
-    {
-      "externalId": "1C-000001",
-      "warehouseCode": "KEM-MAIN",
-      "warehouseName": "Барнаул · Основной склад",
-      "quantity": 12,
-      "reserved": 2,
-      "price": 18490,
-      "oldPrice": 20990,
-      "currency": "RUB"
-    }
-  ]
-}
-```
-
-До 5000 строк за запрос. Сначала нужно выгрузить номенклатуру: строка с
-неизвестным `externalId` не сможет создать цену или остаток.
-
-## Импорт применяемости
-
-```http
-POST /api/1c/import/fitments
-```
-
-```json
-{
-  "version": "1.0",
-  "syncId": "1c-fitments-20260731-080200",
-  "rows": [
-    {
-      "externalId": "1C-000001",
-      "make": "BMW",
-      "model": "3 Series",
-      "generation": "G20",
-      "yearFrom": 2019,
-      "yearTo": 2026,
-      "isOem": true
-    }
-  ]
-}
-```
-
-До 5000 строк за запрос. Пакет удаляет предыдущую применяемость только для
-затронутых `externalId` и записывает актуальные строки. Сначала нужно загрузить
-товары через `import/products`.
-
-## Получение заказов
-
-```http
-GET /api/1c/orders/export
-```
-
-Метод возвращает до 100 не подтвержденных заказов вместе с товарными строками.
-Денежные суммы передаются целым числом в копейках.
-
-После успешной записи документов в 1С нужно подтвердить заказы:
-
-```http
-POST /api/1c/orders/acknowledge
-```
-
-```json
-{
-  "version": "1.0",
-  "syncId": "1c-orders-ack-20260731-081000",
-  "orderIds": ["order-site-000001"]
-}
-```
-
-Подтверждение отправляется **только после фиксации транзакции в 1С**. При
-сетевой ошибке запрос безопасно повторяется с тем же `syncId`.
-
-## Ответы
-
-- `200` — операция выполнена;
-- `202` — JSON корректен, но база не подключена (`validation-only`);
-- `400` — некорректный JSON;
-- `401` — неверный `X-1C-Token`;
-- `413` — запрос больше 5 МБ;
-- `422` — структура не соответствует контракту;
-- `503` — `ONEC_SHARED_SECRET` не задан.
-
-Полная инструкция внедрения находится в `docs/ONEC_INTEGRATION.md` исходного
-кода.
+Код `207` означает, что корректные записи сохранены, а ошибочные перечислены
+отдельно. Сайт продолжает работать из PostgreSQL, даже если 1С недоступна.

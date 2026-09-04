@@ -4,33 +4,44 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "db:migrate": "tsx server/database/run-migrations.ts",
+    "test": "tsx --test \"server/tests/*.test.ts\"",
     "build": "next build --webpack",
     "build:worker": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint app components lib eslint.config.mjs",
+    "lint": "eslint app components lib server eslint.config.mjs",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
-    "@opennextjs/cloudflare": "latest",
     "@swc/helpers": "0.5.15",
     "client-only": "0.0.1",
-    "drizzle-orm": "latest",
-    "lucide-react": "latest",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "styled-jsx": "5.1.6",
-    "zod": "latest"
+    "lucide-react": "1.27.0",
+    "nanoid": "3.3.18",
+    "next": "16.3.4",
+    "pg": "8.23.0",
+    "pg-cloudflare": "1.4.0",
+    "pg-connection-string": "2.14.0",
+    "pg-pool": "3.14.0",
+    "pg-protocol": "1.16.0",
+    "pg-types": "2.2.0",
+    "pgpass": "1.0.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "styled-jsx": "5.1.7",
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
+    "@opennextjs/cloudflare": "1.20.6",
+    "@types/node": "26.1.2",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
     "eslint": "9.39.2",
-    "eslint-config-next": "latest",
+    "eslint-config-next": "16.3.4",
+    "tsx": "4.23.13",
     "typescript": "6.0.2",
-    "wrangler": "latest"
+    "wrangler": "4.128.0"
   },
   "packageManager": "pnpm@11.9.0"
 }

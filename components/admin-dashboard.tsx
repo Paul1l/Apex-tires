@@ -25,7 +25,6 @@ import {
   Search,
   Settings,
   ShoppingCart,
-  Sparkles,
   Trash2,
   TrendingUp,
   Upload,
@@ -48,10 +47,23 @@ type Section = "overview" | "products" | "orders" | "sync" | "settings";
 
 interface OneCGatewayHealth {
   ok: boolean;
-  mode: "active" | "validation-only";
-  secretConfigured: boolean;
-  databaseConfigured: boolean;
+  site: "healthy" | "degraded";
+  database: "healthy" | "unavailable" | "not_configured";
+  oneC: "healthy" | "unavailable" | "not_configured";
   timestamp: string;
+  synchronization: {
+    last_success_at: string | null;
+    products_processed_24h: number;
+    error_runs: number;
+    recentErrors: Array<{
+      entity_type: string;
+      operation: string;
+      status: string;
+      error_summary: string | null;
+      started_at: string;
+    }>;
+  };
+  orders: Record<"pending" | "processing" | "synced" | "failed", number>;
 }
 
 const blankProduct: Product = {
@@ -96,7 +108,7 @@ function MiniArt({ product }: { product: Product }) {
 }
 
 function AdminLogin() {
-  const { login, loginAsDemoAdmin } = useStore();
+  const { login } = useStore();
   const [message, setMessage] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -115,13 +127,12 @@ function AdminLogin() {
         <h1>Управление магазином</h1>
         <p>Каталог, заказы, остатки и синхронизация с 1С в одном интерфейсе.</p>
         <form onSubmit={submit}>
-          <label><span>Электронная почта</span><input type="email" name="email" defaultValue="admin@apex.local" required /></label>
-          <label><span>Пароль</span><input type="password" name="password" defaultValue="Apex2026!" required /></label>
+          <label><span>Электронная почта</span><input type="email" name="email" autoComplete="username" required /></label>
+          <label><span>Пароль</span><input type="password" name="password" autoComplete="current-password" required /></label>
           {message && <small className="admin-login-message">{message}</small>}
           <button className="admin-primary-button">Войти <ArrowRight size={17} /></button>
         </form>
-        <button className="admin-demo-login" onClick={loginAsDemoAdmin}><Sparkles size={16} /> Быстрый вход в демо</button>
-        <small className="admin-security-note">В production доступ защищается серверной сессией и ролями.</small>
+        <small className="admin-security-note">Демо-доступ отключен. В production доступ будет защищен серверной сессией, ролями и журналом действий.</small>
       </section>
     </main>
   );
@@ -359,9 +370,6 @@ function OrdersSection() {
 }
 
 function SyncSection() {
-  const { saveProduct } = useStore();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [importMessage, setImportMessage] = useState("");
   const [gatewayHealth, setGatewayHealth] =
     useState<OneCGatewayHealth | null>(null);
   const [gatewayCheckFailed, setGatewayCheckFailed] = useState(false);
@@ -372,7 +380,7 @@ function SyncSection() {
     setGatewayCheckFailed(false);
 
     try {
-      const healthResponse = await fetch("/api/1c/health", {
+      const healthResponse = await fetch("/api/integration-status", {
         cache: "no-store",
       });
       if (!healthResponse.ok) throw new Error("Gateway health request failed");
@@ -392,60 +400,43 @@ function SyncSection() {
     void refreshGatewayHealth();
   }, []);
 
-  function importJson(file?: File) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const value = JSON.parse(String(reader.result));
-        if (!Array.isArray(value)) throw new Error("Ожидался массив товаров");
-        let count = 0;
-        value.forEach((item) => {
-          if (item?.id && item?.brand && item?.model && typeof item?.price === "number") {
-            saveProduct({ ...blankProduct, ...item, updatedAt: new Date().toISOString() });
-            count += 1;
-          }
-        });
-        setImportMessage(`Импортировано: ${count} позиций`);
-      } catch {
-        setImportMessage("Файл не соответствует формату каталога");
-      }
-    };
-    reader.readAsText(file);
-  }
-
   return (
     <>
       <div className="admin-page-intro"><div><p className="eyebrow">Интеграции</p><h1>Обмен с 1С</h1><span>Импорт номенклатуры, цен и остатков. Экспорт заказов.</span></div><button className="admin-primary-button" onClick={() => void refreshGatewayHealth()} disabled={gatewayCheckInProgress}><RefreshCw size={16} /> {gatewayCheckInProgress ? "Проверяем…" : "Проверить шлюз"}</button></div>
       <div className="sync-status-card">
         <div className="sync-orbit"><CloudCog /><span /></div>
-        <div><p className="eyebrow">Статус шлюза</p><h2>{gatewayHealth?.mode === "active" ? "Синхронизация активна" : gatewayCheckFailed ? "Шлюз недоступен" : "Контур подготовлен"}</h2><p>{gatewayHealth?.mode === "active" ? "Секрет и база подключены. Можно выполнять приемочные тесты с 1С." : "API доступен, но реальный обмен выключен. Нужны secret, production-БД и обработка на стороне вашей 1С."}</p></div>
-        <span className="sync-ready"><i /> {gatewayHealth?.mode === "active" ? "Активен" : "Validation-only"}</span>
+        <div><p className="eyebrow">Статус шлюза</p><h2>{gatewayHealth?.oneC === "healthy" ? "1С подключена" : gatewayHealth?.oneC === "unavailable" || gatewayCheckFailed ? "1С недоступна" : "1С не подключена"}</h2><p>{gatewayHealth?.oneC === "healthy" ? "Сервер сайта, PostgreSQL и HTTP-сервис 1С доступны." : gatewayHealth?.oneC === "unavailable" ? "Каталог продолжает работать из PostgreSQL. Ошибка соединения зафиксирована для администратора." : "Подготовлен production-контур. Для запуска нужны PostgreSQL, адрес HTTP-сервиса 1С и секреты окружения."}</p></div>
+        <span className="sync-ready"><i /> {gatewayHealth?.oneC === "healthy" ? "Подключена" : gatewayHealth?.oneC === "unavailable" ? "Недоступна" : "Не подключена"}</span>
       </div>
       <div className="sync-grid">
         <article className="admin-card">
           <div className="admin-card-head"><div><p className="eyebrow">API endpoints</p><h2>HTTP JSON</h2></div><Database /></div>
           <div className="endpoint-list">
-            <div><span className="method get">GET</span><code>/api/1c/health</code><small>Проверка доступности</small></div>
-            <div><span className="method post">POST</span><code>/api/1c/import/products</code><small>Номенклатура и свойства</small></div>
-            <div><span className="method post">POST</span><code>/api/1c/import/stock-prices</code><small>Цены и остатки</small></div>
-            <div><span className="method get">GET</span><code>/api/1c/orders/export</code><small>Новые заказы для 1С</small></div>
-            <div><span className="method post">POST</span><code>/api/1c/orders/acknowledge</code><small>Подтверждение записи в 1С</small></div>
+            <div><span className="method get">GET</span><code>/api/integrations/1c/v1/health</code><small>Проверка доступности</small></div>
+            <div><span className="method post">POST</span><code>/api/integrations/1c/v1/products/batch</code><small>Номенклатура и свойства</small></div>
+            <div><span className="method post">POST</span><code>/api/integrations/1c/v1/prices/batch</code><small>Цены</small></div>
+            <div><span className="method post">POST</span><code>/api/integrations/1c/v1/stocks/batch</code><small>Остатки по складам</small></div>
+            <div><span className="method post">POST</span><code>/api/integrations/1c/v1/fitments/batch</code><small>Применяемость по автомобилям</small></div>
+            <div><span className="method get">GET</span><code>/api/integrations/1c/v1/orders</code><small>Заказы для 1С</small></div>
+            <div><span className="method post">POST</span><code>/api/integrations/1c/v1/order-statuses/batch</code><small>Статусы заказов</small></div>
           </div>
-          <div className="token-note"><strong>Авторизация</strong><code>X-1C-Token: ••••••••••••</code><span>Токен хранится как secret, не в коде.</span></div>
+          <div className="token-note"><strong>Авторизация</strong><code>X-Integration-Key: ••••••••••••</code><span>Ключ хранится только в серверном хранилище секретов и 1С.</span></div>
         </article>
         <article className="admin-card">
-          <div className="admin-card-head"><div><p className="eyebrow">Ручной обмен</p><h2>Импорт JSON</h2></div><FileJson /></div>
-          <button className="json-dropzone" onClick={() => fileRef.current?.click()}><Upload /><strong>Выберите файл каталога</strong><span>Массив товаров в формате API v1</span></button>
-          <input ref={fileRef} type="file" accept="application/json" hidden onChange={(e) => importJson(e.target.files?.[0])} />
-          {importMessage && <p className="import-message">{importMessage}</p>}
+          <div className="admin-card-head"><div><p className="eyebrow">Состояние обмена</p><h2>Очередь и синхронизация</h2></div><FileJson /></div>
+          <div className="endpoint-list">
+            <div><strong>{gatewayHealth?.synchronization.products_processed_24h ?? 0}</strong><small>товаров обработано за 24 часа</small></div>
+            <div><strong>{gatewayHealth?.orders.pending ?? 0}</strong><small>заказов ожидают отправки</small></div>
+            <div><strong>{gatewayHealth?.orders.failed ?? 0}</strong><small>заказов требуют внимания</small></div>
+          </div>
+          <button className="admin-secondary-button full" type="button" disabled title="Кнопка станет активной после подключения production-авторизации администратора"><RefreshCw size={16} /> Повторить неудачные отправки</button>
           <a className="admin-secondary-button full" href="/1c-integration.md" download>Скачать спецификацию <Download size={16} /></a>
         </article>
       </div>
       <article className="admin-card sync-log">
-        <div className="admin-card-head"><div><p className="eyebrow">Журнал</p><h2>Операции появятся после подключения</h2></div><Activity /></div>
+        <div className="admin-card-head"><div><p className="eyebrow">Журнал</p><h2>{gatewayHealth?.synchronization.last_success_at ? "Последние операции" : "Операций пока не было"}</h2></div><Activity /></div>
         <div className="sync-log-list">
-          <div><span className="log-icon"><CloudCog /></span><p><strong>Рабочих обменов еще не было</strong><span>После настройки записи будут читаться из таблицы sync_runs.</span></p><time>—</time><b>—</b></div>
+          {(gatewayHealth?.synchronization.recentErrors.length ?? 0) > 0 ? gatewayHealth?.synchronization.recentErrors.map((error) => <div key={`${error.entity_type}-${error.started_at}`}><span className="log-icon"><CloudCog /></span><p><strong>{error.entity_type}</strong><span>{error.error_summary || "Часть записей не обработана"}</span></p><time>{new Date(error.started_at).toLocaleString("ru-RU")}</time><b>{error.status}</b></div>) : <div><span className="log-icon"><CloudCog /></span><p><strong>Рабочих обменов еще не было</strong><span>После подключения журнал будет читаться из PostgreSQL.</span></p><time>—</time><b>—</b></div>}
         </div>
       </article>
     </>
@@ -494,7 +485,7 @@ export function AdminDashboard() {
         <div className="admin-sidebar-brand"><span className="admin-brand-mark"><i /><i /><i /></span><strong>APEX</strong><small>CONTROL</small><button onClick={() => setSidebarOpen(false)}><X /></button></div>
         <nav>{navigation.map(({ id, label, icon: Icon, badge }) => <button key={id} className={section === id ? "active" : ""} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{badge && <b>{badge}</b>}</button>)}</nav>
         <div className="admin-sidebar-bottom">
-          <div className="admin-sync-mini"><span><i />1С</span><strong>Не подключена</strong><small>API в validation-only</small></div>
+          <div className="admin-sync-mini"><span><i />1С</span><strong>Не подключена</strong><small>Ожидает production-настройки</small></div>
           <Link href="/"><ArrowLeft size={17} /> В магазин</Link>
         </div>
       </aside>

@@ -18,10 +18,8 @@ pnpm dev
 Магазин: `http://localhost:3000`  
 Админка: `http://localhost:3000/admin`
 
-Демо-администратор:
-
-- email: `admin@apex.local`;
-- пароль: `Apex2026!`.
+Серверные API запускаются вместе с Next.js. PostgreSQL и интеграционные
+переменные настраиваются по `.env.example`.
 
 ## Статус
 
@@ -29,11 +27,11 @@ pnpm dev
 Каталог, корзина и изменения админки пока сохраняются в `localStorage`
 браузера. Покупательская авторизация переведена на серверный email OTP, но на
 стенде она останется отключенной до подключения БД и ключей Yandex Cloud
-Postbox. Файл `database/schema.sql` содержит схему, развернутой production-БД
-нет.
+Postbox. Production-схема находится в PostgreSQL-миграциях, но развернутой
+production-БД в репозитории нет.
 
-API 1С работает в режиме `validation-only`, пока не заданы база и
-`ONEC_SHARED_SECRET`. Проверить режим можно через `GET /api/1c/health`.
+Для 1С подготовлен server-side integration layer внутри Next.js. Реальное
+соединение остается выключенным до получения параметров конкретной базы 1С.
 
 ## Реализовано
 
@@ -48,9 +46,10 @@ API 1С работает в режиме `validation-only`, пока не зад
 - отдельные правовые документы и согласия в формах;
 - cookie-центр: Метрика не загружается до согласия;
 - runtime-настройка `YANDEX_METRIKA_COUNTER_ID`;
-- JSON API 1С для товаров, цен, остатков и заказов;
-- идемпотентные запуски обмена и подтверждение полученных заказов;
-- референсная SQL/Drizzle-схема;
+- версионированный JSON API 1С для товаров, цен, остатков и заказов;
+- `ERPIntegrationProvider` / `OneCProvider` / `OneCHttpProvider`;
+- идемпотентные batch, журнал ошибок и надежная очередь заказов;
+- PostgreSQL-миграции и серверный слой Next.js;
 - стартовая ёмкость каталога на 100 товарных позиций.
 
 ## Документация
@@ -61,14 +60,14 @@ API 1С работает в режиме `validation-only`, пока не зад
   PostgreSQL в РФ;
 - `docs/AUTHENTICATION.md` — email-коды, защита и подключение Postbox;
 - `docs/VEHICLE_CATALOG.md` — откуда берутся автомобили и применяемость;
-- `docs/ONEC_INTEGRATION.md` — подключение реальной 1С;
+- `docs/1C_REST_INTEGRATION.md` — архитектура и контракт подключения 1С;
 - `docs/LEGAL_AND_ANALYTICS.md` — реквизиты, согласия и Метрика;
 - `public/1c-integration.md` — публичный контракт JSON API.
 
 ## Production checklist
 
 1. Получить реквизиты ИП и провести юридическую проверку документов.
-2. Разместить backend и PostgreSQL в РФ; применить production-миграции.
+2. Разместить Next.js и PostgreSQL в РФ; применить production-миграции.
 3. Перевести каталог, заказы и админку с localStorage на API.
 4. Подключить email OTP к российской БД и Yandex Cloud Postbox, проверить
    rate limit и доставляемость.

@@ -25,7 +25,6 @@ interface StoreContextValue {
   toggleCompare: (productId: string) => void;
   login: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
   authenticateUser: (profile: UserProfile) => void;
-  loginAsDemoAdmin: () => void;
   logout: () => void;
   saveProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
@@ -40,13 +39,6 @@ const BROWSER_STORAGE_KEYS = {
   favorites: "apex.favorites.v1",
   compare: "apex.compare.v1",
   user: "apex.user.v1",
-};
-
-const DEMO_ADMIN_USER: UserProfile = {
-  id: "admin-demo",
-  name: "Александр",
-  email: "admin@apex.local",
-  role: "admin",
 };
 
 function readBrowserStorage<T>(key: string, fallbackValue: T): T {
@@ -83,32 +75,27 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       readBrowserStorage(BROWSER_STORAGE_KEYS.favorites, []),
     );
     setCompare(readBrowserStorage(BROWSER_STORAGE_KEYS.compare, []));
-    const cachedUser = readBrowserStorage<UserProfile | null>(
-      BROWSER_STORAGE_KEYS.user,
-      null,
-    );
-    setUser(cachedUser);
+    setUser(null);
+    window.localStorage.removeItem(BROWSER_STORAGE_KEYS.user);
     setHydrated(true);
 
-    if (cachedUser?.id !== DEMO_ADMIN_USER.id) {
-      void fetch("/api/auth/session", {
-        credentials: "same-origin",
-        cache: "no-store",
+    void fetch("/api/auth/session", {
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (response.ok) {
+          const result = (await response.json()) as {
+            user?: UserProfile;
+          };
+          if (result.user) setUser(result.user);
+        } else if (response.status === 401) {
+          setUser(null);
+        }
       })
-        .then(async (response) => {
-          if (response.ok) {
-            const result = (await response.json()) as {
-              user?: UserProfile;
-            };
-            if (result.user) setUser(result.user);
-          } else if (response.status === 401) {
-            setUser(null);
-          }
-        })
-        .catch(() => {
-          // A temporary API outage must not break the rest of the SPA.
-        });
-    }
+      .catch(() => {
+        // A temporary API outage must not break the rest of the SPA.
+      });
   }, []);
 
   useEffect(() => {
@@ -178,17 +165,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (
-      normalizedEmail === DEMO_ADMIN_USER.email &&
-      password === "Apex2026!"
-    ) {
-      setUser(DEMO_ADMIN_USER);
-      return { ok: true, message: "Вход выполнен" };
-    }
+    void email;
+    void password;
     return {
       ok: false,
-      message: "Для покупателей используется вход по коду из письма.",
+      message: "Вход администратора будет доступен после подключения защищённой серверной авторизации.",
     };
   }, []);
 
@@ -221,7 +202,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       toggleCompare,
       login,
       authenticateUser: setUser,
-      loginAsDemoAdmin: () => setUser(DEMO_ADMIN_USER),
       logout: () => {
         setUser(null);
         void fetch("/api/auth/session", {
