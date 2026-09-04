@@ -4,7 +4,8 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createOrder } from "@/lib/api/order-client";
-import type { UserProfile } from "@/lib/types";
+import { businessConfig, getEnabledDeliveryMethods } from "@/config/business";
+import type { DeliveryMethod, UserProfile } from "@/lib/types";
 
 interface CheckoutFormProps {
   user: UserProfile | null;
@@ -13,8 +14,10 @@ interface CheckoutFormProps {
 }
 
 export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
-  const [deliveryMethod, setDeliveryMethod] =
-    useState<"pickup" | "courier">("pickup");
+  const enabledDeliveryMethods = getEnabledDeliveryMethods();
+  const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod | "">(
+    enabledDeliveryMethods[0] ?? "",
+  );
   const [errorMessage, setErrorMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const idempotencyKey = useRef(crypto.randomUUID());
@@ -30,6 +33,12 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
     setErrorMessage("");
     const formData = new FormData(event.currentTarget);
 
+    if (!deliveryMethod) {
+      setErrorMessage("Способы получения еще не настроены владельцем магазина.");
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const order = await createOrder({
         idempotencyKey: idempotencyKey.current,
@@ -42,10 +51,12 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
         delivery: {
           method: deliveryMethod,
           address:
-            deliveryMethod === "courier"
+            deliveryMethod !== "pickup"
               ? String(formData.get("deliveryAddress") || "")
               : undefined,
         },
+        requiresTireService:
+          formData.get("requiresTireService") === "on",
         comment: String(formData.get("comment") || "") || undefined,
       });
       onSuccess(order.number);
@@ -93,21 +104,32 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
       </label>
       <label>
         <span>Получение</span>
-        <select
-          name="deliveryMethod"
-          value={deliveryMethod}
-          onChange={(event) =>
-            setDeliveryMethod(event.target.value as "pickup" | "courier")
-          }
-        >
-          <option value="pickup">Самовывоз в Барнауле</option>
-          <option value="courier">Доставка по Барнаулу</option>
-        </select>
+        {enabledDeliveryMethods.length > 0 ? (
+          <select
+            name="deliveryMethod"
+            value={deliveryMethod}
+            onChange={(event) =>
+              setDeliveryMethod(event.target.value as DeliveryMethod)
+            }
+          >
+            {businessConfig.delivery.pickup.enabled && <option value="pickup">Самовывоз</option>}
+            {businessConfig.delivery.cityDelivery.enabled && <option value="courier">Доставка по {businessConfig.location.city}</option>}
+            {businessConfig.delivery.regionalDelivery.enabled && <option value="transport_company">Доставка транспортной компанией</option>}
+          </select>
+        ) : (
+          <small className="checkout-error">Получение заказов будет включено после согласования условий.</small>
+        )}
       </label>
-      {deliveryMethod === "courier" && (
+      {(deliveryMethod === "courier" || deliveryMethod === "transport_company") && (
         <label>
           <span>Адрес доставки</span>
           <input name="deliveryAddress" autoComplete="street-address" required />
+        </label>
+      )}
+      {businessConfig.services.tireService && (
+        <label className="consent-row checkout-consent">
+          <input name="requiresTireService" type="checkbox" />
+          <span>Нужен шиномонтаж — условия и время согласует менеджер.</span>
         </label>
       )}
       <label>
@@ -132,7 +154,8 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
           {errorMessage}
         </p>
       )}
-      <button className="primary-button full" type="submit" disabled={submitting}>
+      <p className="summary-hint">Заказ можно оформить без регистрации.</p>
+      <button className="primary-button full" type="submit" disabled={submitting || !deliveryMethod}>
         {submitting ? "Сохраняем заказ…" : "Оформить заказ"}{" "}
         {!submitting && <ArrowRight size={17} />}
       </button>

@@ -22,12 +22,15 @@ export const productSchema = z.object({
   category: z.string().trim().max(120).default(""),
   description: z.string().trim().max(20_000).default(""),
   kind: z.enum(["tire", "wheel"]),
+  condition: z.enum(["new", "used"]).default("new"),
   width: z.number().int().min(0).max(500).default(0),
   profile: z.number().int().min(0).max(100).default(0),
   diameter: z.number().int().min(8).max(40),
   season: z.enum(["summer", "winter", "all-season", "none"]).default("none"),
   studded: z.boolean().default(false),
   runflat: z.boolean().default(false),
+  xl: z.boolean().default(false),
+  wheelType: z.enum(["alloy", "steel", "other"]).optional(),
   pcd: z.string().trim().max(30).optional(),
   offset: z.number().int().min(-100).max(200).optional(),
   centerBore: z.number().min(20).max(200).optional(),
@@ -54,6 +57,7 @@ export const priceSchema = z.object({
   priceType: z.string().trim().min(1).max(80).default("retail"),
   price: z.number().nonnegative().max(100_000_000).multipleOf(0.01),
   oldPrice: z.number().nonnegative().max(100_000_000).multipleOf(0.01).optional(),
+  discount: z.number().min(0).max(100).multipleOf(0.01).optional(),
   currency: z.literal("RUB").default("RUB"),
   sourceUpdatedAt: isoTimestampSchema.optional(),
 });
@@ -81,6 +85,10 @@ const fitmentSchema = z
     yearFrom: z.number().int().min(1900).max(2200).optional(),
     yearTo: z.number().int().min(1900).max(2200).optional(),
     isOem: z.boolean().default(false),
+    source: z.enum(["manual", "import", "external_api"]).default("import"),
+    verified: z.boolean().default(false),
+    verifiedAt: isoTimestampSchema.optional(),
+    notes: z.string().trim().max(2_000).optional(),
   })
   .refine(
     (fitment) =>

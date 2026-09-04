@@ -1,4 +1,6 @@
 import type { Pool } from "pg";
+import { businessConfig, getEnabledDeliveryMethods } from "../../config/business";
+import type { DeliveryMethod } from "../../lib/types";
 import { withTransaction } from "../database/postgres-client";
 import {
   OrderRepository,
@@ -20,20 +22,52 @@ type CheckoutOrderRepository = Pick<
 export interface OrderServiceDependencies {
   pool: Pool;
   orderRepository: CheckoutOrderRepository;
+  enabledDeliveryMethods?: readonly DeliveryMethod[];
+  tireServiceEnabled?: boolean;
+  managerNotificationEmail?: string;
 }
 
 export class OrderService {
   private readonly pool: Pool;
   private readonly orderRepository: CheckoutOrderRepository;
+  private readonly enabledDeliveryMethods: readonly DeliveryMethod[];
+  private readonly tireServiceEnabled: boolean;
+  private readonly managerNotificationEmail?: string;
 
-  constructor({ pool, orderRepository }: OrderServiceDependencies) {
+  constructor({
+    pool,
+    orderRepository,
+    enabledDeliveryMethods = getEnabledDeliveryMethods(businessConfig),
+    tireServiceEnabled = businessConfig.services.tireService,
+    managerNotificationEmail =
+      businessConfig.contacts.supportEmail ??
+      businessConfig.contacts.email ??
+      undefined,
+  }: OrderServiceDependencies) {
     this.pool = pool;
     this.orderRepository = orderRepository;
+    this.enabledDeliveryMethods = enabledDeliveryMethods;
+    this.tireServiceEnabled = tireServiceEnabled;
+    this.managerNotificationEmail = managerNotificationEmail;
   }
 
   async createOrder(
     input: CreateOrderInput,
   ): Promise<CreatedOrderRow & { duplicate?: true }> {
+    if (!this.enabledDeliveryMethods.includes(input.delivery.method)) {
+      throw new ApplicationError({
+        code: "DELIVERY_METHOD_UNAVAILABLE",
+        message: "Выбранный способ получения сейчас недоступен.",
+        statusCode: 422,
+      });
+    }
+    if (input.requiresTireService && !this.tireServiceEnabled) {
+      throw new ApplicationError({
+        code: "TIRE_SERVICE_UNAVAILABLE",
+        message: "Шиномонтаж пока нельзя добавить к заказу.",
+        statusCode: 422,
+      });
+    }
     const existingOrder = await this.orderRepository.findByCheckoutIdempotencyKey(
       this.pool,
       input.idempotencyKey,
@@ -128,6 +162,7 @@ export class OrderService {
         subtotalKopecks,
         deliveryKopecks,
         totalKopecks: subtotalKopecks + deliveryKopecks,
+        managerNotificationEmail: this.managerNotificationEmail,
       });
     });
   }

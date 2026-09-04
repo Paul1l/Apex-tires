@@ -2,7 +2,7 @@ import type { Product } from "@/lib/types";
 
 const updatedAt = "2026-07-30T08:00:00.000Z";
 
-export const seedProducts: Product[] = [
+const previewProducts: Array<Omit<Product, "condition" | "priceUpdatedAt">> = [
   {
     id: "tire-pilot-sport-5",
     sku: "T-MI-PS5-2254518",
@@ -18,13 +18,10 @@ export const seedProducts: Product[] = [
     studded: false,
     runflat: false,
     price: 18490,
-    oldPrice: 20990,
     stock: 12,
     reserved: 2,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.9,
-    reviews: 128,
-    tags: ["Выбор экспертов", "XL"],
+    tags: ["XL"],
     country: "Франция",
     featured: true,
     compatibleCars: ["BMW 3 Series", "Audi A4", "Mercedes-Benz C-Class", "Kia K5"],
@@ -48,9 +45,7 @@ export const seedProducts: Product[] = [
     stock: 24,
     reserved: 4,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.8,
-    reviews: 94,
-    tags: ["Тихая"],
+    tags: [],
     country: "Германия",
     compatibleCars: ["Volkswagen Passat", "Skoda Octavia", "Toyota Corolla", "Kia Ceed"],
     updatedAt,
@@ -70,12 +65,9 @@ export const seedProducts: Product[] = [
     studded: true,
     runflat: false,
     price: 16990,
-    oldPrice: 18490,
     stock: 18,
     reserved: 1,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.9,
-    reviews: 167,
     tags: ["Шипы", "XL"],
     country: "Россия",
     compatibleCars: ["Toyota Camry", "Hyundai Sonata", "Kia K5", "Subaru Forester"],
@@ -99,8 +91,6 @@ export const seedProducts: Product[] = [
     stock: 7,
     reserved: 0,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.7,
-    reviews: 73,
     tags: ["Липучка", "XL"],
     country: "Италия",
     compatibleCars: ["Toyota RAV4", "Volkswagen Tiguan", "Kia Sportage", "Hyundai Tucson"],
@@ -121,12 +111,9 @@ export const seedProducts: Product[] = [
     studded: false,
     runflat: true,
     price: 22490,
-    oldPrice: 23990,
     stock: 8,
     reserved: 2,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.9,
-    reviews: 56,
     tags: ["RunFlat", "Sport"],
     country: "Германия",
     featured: true,
@@ -151,8 +138,6 @@ export const seedProducts: Product[] = [
     stock: 16,
     reserved: 3,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.8,
-    reviews: 114,
     tags: ["All Terrain"],
     country: "Япония",
     compatibleCars: ["Toyota Land Cruiser Prado", "Mitsubishi Pajero Sport", "Haval H9"],
@@ -176,9 +161,7 @@ export const seedProducts: Product[] = [
     stock: 20,
     reserved: 5,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.7,
-    reviews: 61,
-    tags: ["Комфорт"],
+    tags: [],
     country: "Япония",
     compatibleCars: ["Toyota Camry", "Skoda Octavia", "Volkswagen Passat", "Mazda 6"],
     updatedAt,
@@ -201,8 +184,6 @@ export const seedProducts: Product[] = [
     stock: 32,
     reserved: 6,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.6,
-    reviews: 89,
     tags: ["4 сезона"],
     country: "Корея",
     compatibleCars: ["Kia Ceed", "Hyundai Elantra", "Skoda Octavia", "Toyota Corolla"],
@@ -230,8 +211,6 @@ export const seedProducts: Product[] = [
     stock: 4,
     reserved: 0,
     warehouse: "Барнаул · Основной склад",
-    rating: 5,
-    reviews: 21,
     tags: ["Flow Formed"],
     country: "США",
     featured: true,
@@ -257,12 +236,9 @@ export const seedProducts: Product[] = [
     centerBore: 82,
     color: "Platinum Silver",
     price: 32900,
-    oldPrice: 35900,
     stock: 8,
     reserved: 2,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.9,
-    reviews: 38,
     tags: ["Made in Germany"],
     country: "Германия",
     compatibleCars: ["Audi A4", "Volkswagen Passat", "Skoda Octavia"],
@@ -290,9 +266,7 @@ export const seedProducts: Product[] = [
     stock: 14,
     reserved: 1,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.7,
-    reviews: 44,
-    tags: ["Гарантия 3 года"],
+    tags: [],
     country: "Россия",
     compatibleCars: ["Kia K5", "Hyundai Sonata", "Toyota Camry"],
     updatedAt,
@@ -319,14 +293,23 @@ export const seedProducts: Product[] = [
     stock: 6,
     reserved: 0,
     warehouse: "Барнаул · Основной склад",
-    rating: 4.8,
-    reviews: 17,
     tags: ["TÜV"],
     country: "Германия",
     compatibleCars: ["Volvo XC60", "Ford Mondeo", "Land Rover Range Rover Evoque"],
     updatedAt,
   },
 ];
+
+/**
+ * Visual preview only. Production validation requires the catalog data mode to
+ * be `database`, so these example prices and stocks cannot silently become a
+ * live commercial catalog.
+ */
+export const seedProducts: Product[] = previewProducts.map((product) => ({
+  ...product,
+  condition: "new",
+  priceUpdatedAt: product.updatedAt,
+}));
 
 export const formatPrice = (price: number) =>
   new Intl.NumberFormat("ru-RU").format(price) + " ₽";

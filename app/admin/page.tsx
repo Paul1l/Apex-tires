@@ -1,7 +1,7 @@
 import { AdminDashboard } from "@/components/admin-dashboard";
 
 export const metadata = {
-  title: "Apex Control — управление магазином",
+  title: "Панель управления магазином",
 };
 
 export default function AdminPage() {

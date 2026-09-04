@@ -12,8 +12,15 @@ export interface LegalDocument {
   sections: LegalDocumentSection[];
 }
 
-export const LEGAL_PLACEHOLDER =
-  "[ЗАПОЛНИТЬ ПОСЛЕ ПОЛУЧЕНИЯ РЕКВИЗИТОВ ИП]";
+export const LEGAL_PLACEHOLDER = BUSINESS_DATA_PLACEHOLDER;
+const STORE_BRAND = businessConfig.brandName;
+const SELLER_NAME = getPublicBusinessValue(getSellerDisplayName());
+const SELLER_ADDRESS = getPublicBusinessValue(
+  businessConfig.seller.legalAddress ?? businessConfig.location.address,
+);
+const CONTACT_EMAIL = getPublicBusinessValue(
+  businessConfig.contacts.supportEmail ?? businessConfig.contacts.email,
+);
 
 export const legalDocuments: LegalDocument[] = [
   {
@@ -21,12 +28,12 @@ export const legalDocuments: LegalDocument[] = [
     shortTitle: "Правила пользования",
     title: "Пользовательское соглашение и правила пользования сайтом",
     description:
-      "Правила доступа к сайту, личному кабинету, каталогу, подбору и другим цифровым функциям APEX WHEELS.",
+      `Правила доступа к сайту, личному кабинету, каталогу, подбору и другим цифровым функциям ${STORE_BRAND}.`,
     sections: [
       {
         heading: "1. Статус документа",
         paragraphs: [
-          `Настоящий документ регулирует использование сайта APEX WHEELS. Владелец сайта и оператор сервиса: ${LEGAL_PLACEHOLDER}.`,
+          `Настоящий документ регулирует использование сайта ${STORE_BRAND}. Владелец сайта и оператор сервиса: ${SELLER_NAME}.`,
           "Соглашение относится к использованию сайта. Условия покупки товара определяются отдельной публичной офертой.",
         ],
       },
@@ -53,7 +60,7 @@ export const legalDocuments: LegalDocument[] = [
           "Пользователь указывает достоверные данные и обеспечивает конфиденциальность пароля.",
           "Нельзя передавать доступ третьим лицам, вмешиваться в работу сайта, обходить ограничения или автоматически собирать данные без согласования.",
           "При подозрении на компрометацию учетной записи пользователь сообщает продавцу по адресу " +
-            LEGAL_PLACEHOLDER +
+            CONTACT_EMAIL +
             ".",
         ],
       },
@@ -73,7 +80,7 @@ export const legalDocuments: LegalDocument[] = [
       {
         heading: "7. Обращения и изменения",
         paragraphs: [
-          `Юридически значимые обращения направляются по адресу: ${LEGAL_PLACEHOLDER}.`,
+          `Юридически значимые обращения направляются по адресу: ${CONTACT_EMAIL}.`,
           "Новая редакция публикуется на этой странице с указанием даты обновления. Для уже оформленных заказов применяются условия, действовавшие в момент оформления, если закон не устанавливает иное.",
         ],
       },
@@ -84,12 +91,12 @@ export const legalDocuments: LegalDocument[] = [
     shortTitle: "Политика конфиденциальности",
     title: "Политика обработки и защиты персональных данных",
     description:
-      "Какие персональные данные получает APEX WHEELS, зачем они нужны, как защищаются и как реализовать права субъекта данных.",
+      `Какие персональные данные получает ${STORE_BRAND}, зачем они нужны, как защищаются и как реализовать права субъекта данных.`,
     sections: [
       {
         heading: "1. Оператор и область действия",
         paragraphs: [
-          `Оператор персональных данных: ${LEGAL_PLACEHOLDER}. Адрес оператора: ${LEGAL_PLACEHOLDER}. Email для обращений по персональным данным: ${LEGAL_PLACEHOLDER}.`,
+          `Оператор персональных данных: ${SELLER_NAME}. Адрес оператора: ${SELLER_ADDRESS}. Email для обращений по персональным данным: ${CONTACT_EMAIL}.`,
           "Политика применяется к данным посетителей сайта, зарегистрированных пользователей, покупателей и лиц, направивших запрос на консультацию.",
         ],
       },
@@ -174,7 +181,7 @@ export const legalDocuments: LegalDocument[] = [
       {
         heading: "1. Кому предоставляется согласие",
         paragraphs: [
-          `Пользователь свободно, своей волей и в своем интересе предоставляет согласие оператору: ${LEGAL_PLACEHOLDER}, адрес: ${LEGAL_PLACEHOLDER}, email: ${LEGAL_PLACEHOLDER}.`,
+          `Пользователь свободно, своей волей и в своем интересе предоставляет согласие оператору: ${SELLER_NAME}, адрес: ${SELLER_ADDRESS}, email: ${CONTACT_EMAIL}.`,
         ],
       },
       {
@@ -261,7 +268,7 @@ export const legalDocuments: LegalDocument[] = [
       {
         heading: "1. Продавец",
         paragraphs: [
-          `Продавец: ${LEGAL_PLACEHOLDER}. ОГРНИП: ${LEGAL_PLACEHOLDER}. ИНН: ${LEGAL_PLACEHOLDER}. Адрес и место возврата товара: ${LEGAL_PLACEHOLDER}. Контакты для претензий: ${LEGAL_PLACEHOLDER}.`,
+          `Продавец: ${SELLER_NAME}. ОГРНИП: ${getPublicBusinessValue(businessConfig.seller.ogrnip)}. ИНН: ${getPublicBusinessValue(businessConfig.seller.inn)}. Адрес и место возврата товара: ${getPublicBusinessValue(businessConfig.seller.returnAddress)}. Контакты для претензий: ${CONTACT_EMAIL}.`,
           "Документ является проектом и не должен применяться для реальных продаж до заполнения реквизитов, условий оплаты, доставки, возврата и проверки юристом.",
         ],
       },
@@ -289,7 +296,7 @@ export const legalDocuments: LegalDocument[] = [
       {
         heading: "5. Доставка и передача",
         paragraphs: [
-          `Территория курьерской доставки — город Барнаул. Способы, стоимость, сроки и возможность самовывоза: ${LEGAL_PLACEHOLDER}. Доставка в другие города на сайте не предлагается. Риск случайного повреждения переходит в порядке, установленном законом и подтвержденными условиями заказа.`,
+          `Территория, способы, стоимость, сроки доставки и возможность самовывоза: ${LEGAL_PLACEHOLDER}. Неподтвержденные способы получения на сайте не предлагаются. Риск случайного повреждения переходит в порядке, установленном законом и подтвержденными условиями заказа.`,
           "При получении покупатель проверяет количество, комплектность, видимые повреждения и соответствие маркировки заказу.",
         ],
       },
@@ -326,9 +333,9 @@ export const legalDocuments: LegalDocument[] = [
       {
         heading: "Доставка",
         items: [
-          `Самовывоз в Барнауле: ${LEGAL_PLACEHOLDER}.`,
-          `Курьерская доставка только в границах города Барнаула: ${LEGAL_PLACEHOLDER}.`,
-          "Доставка в другие города и регионы через сайт не оформляется.",
+          `Самовывоз: ${getPublicBusinessValue(businessConfig.delivery.pickup.rules)}.`,
+          `Курьерская доставка: ${getPublicBusinessValue(businessConfig.delivery.cityDelivery.rules)}.`,
+          `Региональная доставка: ${getPublicBusinessValue(businessConfig.delivery.regionalDelivery.rules)}.`,
           "Точный срок и стоимость подтверждает менеджер до заключения договора.",
         ],
       },
@@ -373,11 +380,11 @@ export const legalDocuments: LegalDocument[] = [
       {
         heading: "Продавец и оператор персональных данных",
         items: [
-          `ФИО индивидуального предпринимателя: ${LEGAL_PLACEHOLDER};`,
-          `ОГРНИП: ${LEGAL_PLACEHOLDER};`,
-          `ИНН: ${LEGAL_PLACEHOLDER};`,
-          `юридический/почтовый адрес: ${LEGAL_PLACEHOLDER};`,
-          `адрес места осуществления деятельности: ${LEGAL_PLACEHOLDER};`,
+          `ФИО/наименование продавца: ${SELLER_NAME};`,
+          `ОГРНИП: ${getPublicBusinessValue(businessConfig.seller.ogrnip)};`,
+          `ИНН: ${getPublicBusinessValue(businessConfig.seller.inn)};`,
+          `юридический/почтовый адрес: ${SELLER_ADDRESS};`,
+          `адрес места осуществления деятельности: ${getPublicBusinessValue(businessConfig.seller.actualAddress ?? businessConfig.location.address)};`,
           `режим налогообложения и сведения о НДС: ${LEGAL_PLACEHOLDER}.`,
         ],
       },
@@ -393,11 +400,11 @@ export const legalDocuments: LegalDocument[] = [
       {
         heading: "Контакты",
         items: [
-          `телефон: ${LEGAL_PLACEHOLDER};`,
-          `общий email: ${LEGAL_PLACEHOLDER};`,
-          `email для персональных данных: ${LEGAL_PLACEHOLDER};`,
-          `email и адрес для претензий/возвратов: ${LEGAL_PLACEHOLDER};`,
-          `режим работы: ${LEGAL_PLACEHOLDER}.`,
+          `телефон: ${getPublicBusinessValue(businessConfig.contacts.phone)};`,
+          `общий email: ${getPublicBusinessValue(businessConfig.contacts.email)};`,
+          `email для персональных данных: ${CONTACT_EMAIL};`,
+          `email и адрес для претензий/возвратов: ${CONTACT_EMAIL}, ${getPublicBusinessValue(businessConfig.seller.returnAddress)};`,
+          `режим работы: ${getPublicBusinessValue(businessConfig.workingHours)}.`,
         ],
       },
     ],
@@ -407,3 +414,9 @@ export const legalDocuments: LegalDocument[] = [
 export const legalDocumentBySlug = new Map(
   legalDocuments.map((document) => [document.slug, document]),
 );
+import {
+  BUSINESS_DATA_PLACEHOLDER,
+  businessConfig,
+  getPublicBusinessValue,
+  getSellerDisplayName,
+} from "@/config/business";

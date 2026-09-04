@@ -1,3 +1,5 @@
+import { businessConfig } from "@/config/business";
+
 const POSTBOX_ENDPOINT = "https://postbox.cloud.yandex.net";
 const POSTBOX_HOST = "postbox.cloud.yandex.net";
 const POSTBOX_SEND_PATH = "/v2/email/outbound-emails";
@@ -111,7 +113,8 @@ export async function deliverAuthenticationCode(
   const accessKeyId = environment.YANDEX_POSTBOX_ACCESS_KEY_ID;
   const secretAccessKey = environment.YANDEX_POSTBOX_SECRET_ACCESS_KEY;
   const fromEmail = environment.YANDEX_POSTBOX_FROM_EMAIL;
-  const fromName = environment.YANDEX_POSTBOX_FROM_NAME?.trim() || "APEX WHEELS";
+  const fromName =
+    environment.YANDEX_POSTBOX_FROM_NAME?.trim() || businessConfig.brandName;
 
   if (!accessKeyId || !secretAccessKey || !fromEmail) {
     throw new DeliveryConfigurationError(
@@ -125,7 +128,7 @@ export async function deliverAuthenticationCode(
     Content: {
       Simple: {
         Subject: {
-          Data: "Код входа в APEX WHEELS",
+          Data: `Код входа в ${businessConfig.brandName}`,
           Charset: "UTF-8",
         },
         Body: {

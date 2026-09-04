@@ -6,11 +6,98 @@ import type {
   StockSyncItem,
 } from "../validators/one-c-schemas";
 
+export interface CatalogProductRow {
+  id: string;
+  sku: string;
+  external_id: string | null;
+  kind: "tire" | "wheel";
+  condition: "new" | "used";
+  brand: string;
+  model: string;
+  name: string;
+  width: number;
+  profile: number;
+  diameter: number;
+  season: "summer" | "winter" | "all-season" | "none";
+  studded: boolean;
+  runflat: boolean;
+  xl: boolean;
+  wheel_type: "alloy" | "steel" | "other" | null;
+  pcd: string | null;
+  offset: number | null;
+  center_bore: number | string | null;
+  color: string | null;
+  country: string | null;
+  amount_kopecks: number | string;
+  old_amount_kopecks: number | string | null;
+  discount_percent: number | string | null;
+  price_updated_at: Date | string;
+  stock: number;
+  reserved: number;
+  warehouse: string | null;
+  image: string | null;
+  compatible_cars: string[];
+  updated_at: Date | string;
+}
+
 function rublesToKopecks(amount: number): number {
   return Math.round(amount * 100);
 }
 
 export class ProductRepository {
+  async listActiveCatalog(
+    database: DatabaseExecutor,
+    limit = 1_000,
+  ): Promise<CatalogProductRow[]> {
+    const result = await database.query<CatalogProductRow>(
+      `SELECT
+         products.id, products.sku, products.external_id, products.kind,
+         products.condition, products.brand, products.model, products.name,
+         products.width, products.profile, products.diameter, products.season,
+         products.studded, products.runflat, products.xl, products.wheel_type,
+         products.pcd, products.offset, products.center_bore, products.color,
+         products.country, prices.amount_kopecks, prices.old_amount_kopecks,
+         prices.discount_percent,
+         COALESCE(prices.price_updated_at, prices.updated_at) AS price_updated_at,
+         COALESCE(inventory.stock, 0)::integer AS stock,
+         COALESCE(inventory.reserved, 0)::integer AS reserved,
+         inventory.warehouse,
+         image.url AS image,
+         COALESCE(fitments.compatible_cars, ARRAY[]::text[]) AS compatible_cars,
+         products.updated_at
+       FROM products
+       INNER JOIN prices
+         ON prices.product_id = products.id AND prices.price_type = 'retail'
+       LEFT JOIN LATERAL (
+         SELECT
+           SUM(inventories.quantity)::integer AS stock,
+           SUM(inventories.reserved)::integer AS reserved,
+           MIN(warehouses.name) AS warehouse
+         FROM inventories
+         INNER JOIN warehouses ON warehouses.id = inventories.warehouse_id
+         WHERE inventories.product_id = products.id AND warehouses.is_active
+       ) inventory ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT product_images.url
+         FROM product_images
+         WHERE product_images.product_id = products.id
+         ORDER BY product_images.position, product_images.id
+         LIMIT 1
+       ) image ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT ARRAY_AGG(DISTINCT CONCAT(product_fitments.make, ' ', product_fitments.model)) AS compatible_cars
+         FROM product_fitments
+         WHERE product_fitments.product_id = products.id
+           AND product_fitments.verified = TRUE
+       ) fitments ON TRUE
+       WHERE products.is_active = TRUE
+       ORDER BY products.updated_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return result.rows;
+  }
+
   async upsertFromExternalSystem(
     database: DatabaseExecutor,
     product: ProductSyncItem,
@@ -20,11 +107,12 @@ export class ProductRepository {
       `INSERT INTO products (
          source_system, external_id, sku, kind, category, name, brand, model,
          description, specifications, width, profile, diameter, season,
-         studded, runflat, pcd, offset, center_bore, color, country, is_active,
-         sync_status, source_updated_at
+         studded, runflat, xl, wheel_type, condition, pcd, offset, center_bore,
+         color, country, is_active, sync_status, source_updated_at
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
+         'active', $26
        )
        ON CONFLICT (source_system, external_id) WHERE external_id IS NOT NULL
        DO UPDATE SET
@@ -42,6 +130,9 @@ export class ProductRepository {
          season = EXCLUDED.season,
          studded = EXCLUDED.studded,
          runflat = EXCLUDED.runflat,
+         xl = EXCLUDED.xl,
+         wheel_type = EXCLUDED.wheel_type,
+         condition = EXCLUDED.condition,
          pcd = EXCLUDED.pcd,
          offset = EXCLUDED.offset,
          center_bore = EXCLUDED.center_bore,
@@ -69,6 +160,9 @@ export class ProductRepository {
         product.season,
         product.studded,
         product.runflat,
+        product.xl,
+        product.wheelType ?? null,
+        product.condition,
         product.pcd ?? null,
         product.offset ?? null,
         product.centerBore ?? null,
@@ -127,17 +221,20 @@ export class ProductRepository {
     const result = await database.query<{ product_id: string }>(
       `INSERT INTO prices (
          product_id, source_system, price_type, amount_kopecks,
-         old_amount_kopecks, currency, source_updated_at
+         old_amount_kopecks, discount_percent, currency, source_updated_at,
+         price_updated_at
        )
-       SELECT id, $2, $3, $4, $5, $6, $7
+       SELECT id, $2, $3, $4, $5, $6, $7, $8, COALESCE($8::timestamptz, NOW())
        FROM products
        WHERE source_system = $2 AND external_id = $1
        ON CONFLICT (product_id, price_type) DO UPDATE SET
          source_system = EXCLUDED.source_system,
          amount_kopecks = EXCLUDED.amount_kopecks,
          old_amount_kopecks = EXCLUDED.old_amount_kopecks,
+         discount_percent = EXCLUDED.discount_percent,
          currency = EXCLUDED.currency,
          source_updated_at = EXCLUDED.source_updated_at,
+         price_updated_at = EXCLUDED.price_updated_at,
          updated_at = NOW()
        RETURNING product_id`,
       [
@@ -146,6 +243,7 @@ export class ProductRepository {
         price.priceType,
         rublesToKopecks(price.price),
         price.oldPrice === undefined ? null : rublesToKopecks(price.oldPrice),
+        price.discount ?? null,
         price.currency,
         price.sourceUpdatedAt ?? null,
       ],
@@ -229,8 +327,8 @@ export class ProductRepository {
       await database.query(
         `INSERT INTO product_fitments (
            product_id, source_system, make, model, generation,
-           year_from, year_to, is_oem
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+           year_from, year_to, is_oem, data_source, verified, verified_at, notes
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           productId,
           sourceSystem,
@@ -240,6 +338,10 @@ export class ProductRepository {
           fitment.yearFrom ?? null,
           fitment.yearTo ?? null,
           fitment.isOem,
+          fitment.source,
+          fitment.verified,
+          fitment.verifiedAt ?? null,
+          fitment.notes ?? null,
         ],
       );
     }

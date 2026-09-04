@@ -20,12 +20,14 @@ export const createOrderSchema = z.object({
     .min(1)
     .max(50),
   delivery: z.object({
-    method: z.enum(["pickup", "courier"]),
+    method: z.enum(["pickup", "courier", "transport_company"]),
     address: z.string().trim().max(500).optional(),
   }),
+  requiresTireService: z.boolean().default(false),
   comment: z.string().trim().max(1_000).optional(),
 }).refine(
-  (order) => order.delivery.method !== "courier" || Boolean(order.delivery.address),
+  (order) =>
+    order.delivery.method === "pickup" || Boolean(order.delivery.address),
   {
     path: ["delivery", "address"],
     message: "Для доставки курьером укажите адрес.",

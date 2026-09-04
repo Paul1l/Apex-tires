@@ -135,12 +135,14 @@ HTTPS. Конкретный вариант выбирается после ау�
   "category": "Легковые шины",
   "description": "Летняя шина",
   "kind": "tire",
+  "condition": "new",
   "width": 205,
   "profile": 55,
   "diameter": 16,
   "season": "summer",
   "studded": false,
   "runflat": false,
+  "xl": false,
   "specifications": { "loadIndex": "91", "speedIndex": "V" },
   "images": [
     {
@@ -155,7 +157,10 @@ HTTPS. Конкретный вариант выбирается после ау�
 }
 ```
 
-Для диска дополнительно используются `pcd`, `offset`, `centerBore`, `color`.
+Для диска дополнительно используются `pcd`, `offset`, `centerBore`, `color` и
+`wheelType` (`alloy`, `steel`, `other`). Значение `condition=used` допускается
+только после подтверждения торговли б/у товарами. Конкретные б/у комплекты и их
+индивидуальные фотографии хранятся отдельно от общей модели товара.
 Изображения не хранятся в base64 или в таблице `products`: 1С передает готовый
 URL либо сначала загружает файл в российское object storage, а затем передает
 URL и ключ изображения.
@@ -187,6 +192,7 @@ URL и ключ изображения.
   "priceType": "retail",
   "price": 15990.00,
   "oldPrice": 17490.00,
+  "discount": 8.58,
   "currency": "RUB",
   "sourceUpdatedAt": "2026-09-04T10:01:00+07:00"
 }
@@ -194,6 +200,8 @@ URL и ключ изображения.
 
 В API цена выражена в рублях максимум с двумя знаками, а PostgreSQL хранит ее
 целым `BIGINT` в копейках. Отрицательные цены отклоняются.
+`oldPrice` и `discount` необязательны: без подтвержденной старой цены скидка на
+витрине не отображается.
 
 ## 9. Остатки
 
@@ -201,8 +209,8 @@ URL и ключ изображения.
 {
   "externalId": "product-guid",
   "warehouseExternalId": "warehouse-guid",
-  "warehouseCode": "BARNAUL-MAIN",
-  "warehouseName": "Барнаул · Основной склад",
+  "warehouseCode": "EXAMPLE-WAREHOUSE",
+  "warehouseName": "ПРИМЕР — заменить фактическим складом",
   "quantity": 8,
   "reserved": 2,
   "sourceUpdatedAt": "2026-09-04T10:02:00+07:00"
@@ -212,6 +220,13 @@ URL и ключ изображения.
 `quantity` и `reserved` — неотрицательные целые числа, `reserved` не превышает
 `quantity`. Остаток неизвестного товара не создается: сначала должна пройти
 синхронизация номенклатуры.
+
+### Качество применяемости
+
+Каждая строка `/fitments/batch` содержит `source` (`manual`, `import` или
+`external_api`), `verified`, `verifiedAt` и `notes`. Непроверенные строки
+сохраняются, но не участвуют в автоматической выдаче совместимых товаров.
+OpenAI и другие LLM не могут устанавливать `verified=true`.
 
 ## 10. Заказы и очередь
 

@@ -1,9 +1,10 @@
 import Link from "next/link";
+import { businessConfig } from "@/config/business";
 import { legalDocuments } from "@/lib/legal-documents";
 
 export const metadata = {
-  title: "Правовая информация — APEX WHEELS",
-  description: "Документы интернет-магазина APEX WHEELS.",
+  title: "Правовая информация",
+  description: `Документы интернет-магазина ${businessConfig.brandName}.`,
 };
 
 export default function LegalDocumentsIndexPage() {
@@ -11,7 +12,7 @@ export default function LegalDocumentsIndexPage() {
     <main className="legal-shell">
       <header className="legal-header">
         <Link href="/" className="legal-brand">
-          APEX <span>WHEELS</span>
+          {businessConfig.brandName}
         </Link>
         <Link href="/" className="legal-back-link">
           Вернуться в магазин

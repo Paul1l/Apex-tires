@@ -16,19 +16,22 @@ import {
   Phone,
   Plus,
   Search,
-  ShieldCheck,
   ShoppingBag,
   SlidersHorizontal,
   Sparkles,
   Star,
-  Truck,
-  Wrench,
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  businessConfig,
+  normalizeTelephoneHref,
+} from "@/config/business";
+import { BrandWordmark } from "@/components/brand-wordmark";
 import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { openCookieSettings } from "@/lib/cookie-consent";
 import { CheckoutForm } from "@/components/checkout-form";
+import { FitmentRequestForm } from "@/components/fitment-request-form";
 import type {
   CatalogFilters,
   Product,
@@ -38,6 +41,10 @@ import type {
 } from "@/lib/types";
 import type { VehicleMake, VehicleModel } from "@/lib/vehicle-catalog";
 import { sortVehiclesByName } from "@/lib/vehicle-name-sorting";
+import {
+  getAvailabilityPresentation,
+  hasValidDiscount,
+} from "@/lib/product-presentation";
 import { useStore } from "@/components/store-provider";
 
 const initialFilters: CatalogFilters = {
@@ -49,7 +56,7 @@ const initialFilters: CatalogFilters = {
   diameter: "",
   minPrice: 0,
   maxPrice: 60000,
-  inStock: true,
+  inStock: businessConfig.catalog.dataMode === "database",
   studded: false,
   runflat: false,
   carMake: "",
@@ -273,12 +280,19 @@ function ProductCard({
   const inCart = cart.some((line) => line.productId === product.id);
   const favorite = favorites.includes(product.id);
   const compared = compare.includes(product.id);
+  const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
+  const availability = getAvailabilityPresentation(
+    product,
+    businessConfig.catalog.availabilityDisplayMode,
+    catalogIsPreview,
+  );
+  const showDiscount = !catalogIsPreview && hasValidDiscount(product);
 
   return (
     <article className="product-card">
       <div className="product-card-top">
         <div className="product-tags">
-          {product.oldPrice && <span className="tag sale">−{Math.round((1 - product.price / product.oldPrice) * 100)}%</span>}
+          {showDiscount && <span className="tag sale">−{Math.round((1 - product.price / product.oldPrice) * 100)}%</span>}
           {product.tags.slice(0, 1).map((tag) => (
             <span className="tag" key={tag}>{tag}</span>
           ))}
@@ -309,20 +323,22 @@ function ProductCard({
       <div className="product-copy">
         <div className="product-meta">
           <span>{product.kind === "tire" ? seasonLabels[product.season] : product.color}</span>
-          <span className="rating"><Star size={13} fill="currentColor" /> {product.rating}</span>
+          {businessConfig.catalog.ratingsEnabled && product.rating && (
+            <span className="rating"><Star size={13} fill="currentColor" /> {product.rating}</span>
+          )}
         </div>
         <button className="product-title" onClick={() => onQuickView(product)}>
           <strong>{product.brand}</strong> {product.model}
         </button>
         <p className="product-size">{product.subtitle}</p>
         <div className="stock-line">
-          <span className={product.stock > product.reserved ? "stock-dot" : "stock-dot empty"} />
-          {product.stock > product.reserved ? `В наличии · ${product.stock - product.reserved} шт.` : "Под заказ"}
+          <span className={availability.available ? "stock-dot" : "stock-dot empty"} />
+          {availability.label}
         </div>
         <div className="product-buy-row">
           <div className="price-block">
             <strong>{formatPrice(product.price)}</strong>
-            {product.oldPrice && <del>{formatPrice(product.oldPrice)}</del>}
+            {showDiscount && <del>{formatPrice(product.oldPrice)}</del>}
           </div>
           <button
             className={inCart ? "bag-button added" : "bag-button"}
@@ -335,7 +351,10 @@ function ProductCard({
             {inCart ? <Check size={19} /> : <ShoppingBag size={19} />}
           </button>
         </div>
-        <p className="split-pay">от {formatPrice(Math.ceil(product.price / 4))} × 4 платежа</p>
+        {catalogIsPreview && <p className="split-pay">Демонстрационная цена</p>}
+        {businessConfig.features.installmentEnabled && !catalogIsPreview && (
+          <p className="split-pay">Условия оплаты частями сообщит подключенный платежный партнер</p>
+        )}
       </div>
     </article>
   );
@@ -511,7 +530,7 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         <button className="modal-close" onClick={onClose} aria-label="Закрыть"><X /></button>
         <div className="auth-brand">
           <span className="logo-mark small"><i /><i /><i /></span>
-          APEX
+          {businessConfig.brandName}
         </div>
         <p className="eyebrow">
           {step === "code"
@@ -667,7 +686,7 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
           <div className="empty-state">
             <ShoppingBag size={34} />
             <h3>Корзина пока пуста</h3>
-            <p>Подберите комплект — мы бесплатно проверим совместимость.</p>
+            <p>Добавьте товары из каталога, чтобы оформить заказ.</p>
             <button className="primary-button" onClick={onClose}>Перейти к товарам</button>
           </div>
         ) : (
@@ -694,7 +713,15 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
             </div>
             <div className="drawer-summary">
               <div><span>Товары</span><strong>{formatPrice(total)}</strong></div>
-              <div><span>Доставка по Барнаулу</span><strong className="accent-text">Бесплатно</strong></div>
+              <div>
+                <span>Получение</span>
+                <strong>
+                  {businessConfig.delivery.pickup.enabled ||
+                  businessConfig.delivery.cityDelivery.enabled
+                    ? "Выберите ниже"
+                    : "Условия уточняются"}
+                </strong>
+              </div>
               <div className="summary-total"><span>Итого</span><strong>{formatPrice(total)}</strong></div>
               {!user && <p className="summary-hint">Можно оформить без регистрации. Аккаунт пригодится для истории заказов.</p>}
               <CheckoutForm
@@ -723,6 +750,8 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
   const { addToCart, favorites, toggleFavorite } = useStore();
   if (!product) return null;
   const favorite = favorites.includes(product.id);
+  const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
+  const showDiscount = !catalogIsPreview && hasValidDiscount(product);
 
   return (
     <Overlay open={Boolean(product)} onClose={onClose} className="modal-overlay">
@@ -732,11 +761,13 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
         <div className="product-modal-copy">
           <div className="modal-badges">
             <span>{product.kind === "tire" ? "Шина" : "Легкосплавный диск"}</span>
-            <span className="rating"><Star size={13} fill="currentColor" /> {product.rating} · {product.reviews} отзывов</span>
+            {businessConfig.catalog.ratingsEnabled && product.rating && (
+              <span className="rating"><Star size={13} fill="currentColor" /> {product.rating}{product.reviews ? ` · ${product.reviews} отзывов` : ""}</span>
+            )}
           </div>
           <h2><span>{product.brand}</span> {product.model}</h2>
           <p className="product-modal-size">{product.subtitle}</p>
-          <div className="compatibility-ok"><BadgeCheck size={19} /> Проверим совместимость перед отправкой</div>
+          <div className="compatibility-ok"><BadgeCheck size={19} /> Параметры совместимости будут подтверждены при обработке заказа</div>
           <dl className="spec-list">
             <div><dt>Артикул</dt><dd>{product.sku}</dd></div>
             <div><dt>{product.kind === "tire" ? "Сезон" : "Цвет"}</dt><dd>{product.kind === "tire" ? seasonLabels[product.season] : product.color}</dd></div>
@@ -745,7 +776,7 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
           </dl>
           <div className="modal-price">
             <strong>{formatPrice(product.price)}</strong>
-            {product.oldPrice && <del>{formatPrice(product.oldPrice)}</del>}
+            {showDiscount && <del>{formatPrice(product.oldPrice)}</del>}
           </div>
           <div className="modal-buy-actions">
             <button
@@ -762,10 +793,7 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
               <Heart size={18} fill={favorite ? "currentColor" : "none"} />
             </button>
           </div>
-          <div className="modal-benefits">
-            <span><Truck size={16} /> Доставка завтра</span>
-            <span><ShieldCheck size={16} /> Расширенная гарантия</span>
-          </div>
+          {catalogIsPreview && <p className="split-pay">Карточка содержит демонстрационные коммерческие данные</p>}
         </div>
       </section>
     </Overlay>
@@ -786,7 +814,7 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
           <div><strong>{user?.email}</strong><span>{user?.role === "admin" ? "Администратор" : "Покупатель"}</span></div>
         </div>
         {user?.role === "admin" && (
-          <Link className="primary-button full" href="/admin">Открыть Apex Control <ArrowRight size={17} /></Link>
+          <Link className="primary-button full" href="/admin">Открыть панель управления <ArrowRight size={17} /></Link>
         )}
         <div className="account-section">
           <p className="eyebrow">Мои автомобили</p>
@@ -834,7 +862,7 @@ function CollectionDrawer({ open, onClose, mode }: { open: boolean; onClose: () 
                 <div>
                   <strong>{product.brand} {product.model}</strong>
                   <span>{product.subtitle}</span>
-                  {mode === "compare" && <small>{product.rating} / 5 · {product.stock} шт. · {product.country}</small>}
+                  {mode === "compare" && <small>{product.subtitle} · {product.country}</small>}
                   <b>{formatPrice(product.price)}</b>
                 </div>
                 <div className="collection-actions">
@@ -850,9 +878,12 @@ function CollectionDrawer({ open, onClose, mode }: { open: boolean; onClose: () 
   );
 }
 
-export function Storefront() {
+export function Storefront({ initialKind = "all" }: { initialKind?: "all" | ProductKind }) {
   const { products, cart, favorites, compare, user } = useStore();
-  const [filters, setFilters] = useState<CatalogFilters>(initialFilters);
+  const [filters, setFilters] = useState<CatalogFilters>({
+    ...initialFilters,
+    kind: initialKind,
+  });
   const [selectorTab, setSelectorTab] = useState<"size" | "car">("size");
   const [heroKind, setHeroKind] = useState<ProductKind>("tire");
   const [heroWidth, setHeroWidth] = useState("225");
@@ -940,8 +971,8 @@ export function Storefront() {
     return [...list].sort((a, b) => {
       if (filters.sort === "price-asc") return a.price - b.price;
       if (filters.sort === "price-desc") return b.price - a.price;
-      if (filters.sort === "rating") return b.rating - a.rating;
-      return Number(Boolean(b.featured)) - Number(Boolean(a.featured)) || b.reviews - a.reviews;
+      if (filters.sort === "rating") return (b.rating ?? 0) - (a.rating ?? 0);
+      return Number(Boolean(b.featured)) - Number(Boolean(a.featured)) || (b.reviews ?? 0) - (a.reviews ?? 0);
     });
   }, [filters, products, selectedVehicleFitmentCount]);
 
@@ -1183,26 +1214,37 @@ export function Storefront() {
     <main>
       <div className="utility-bar">
         <div className="container utility-inner">
-          <div className="utility-location"><MapPin size={14} /> Барнаул</div>
-          <div className="utility-promise">Бесплатная доставка комплекта от 40 000 ₽</div>
-          <div className="utility-links"><span>Для бизнеса</span><span>Доставка и оплата</span><span>Гарантия</span></div>
+          <div className="utility-location"><MapPin size={14} /> {businessConfig.location.city}</div>
+          <div className="utility-promise">
+            {businessConfig.catalog.dataMode === "preview"
+              ? "Предварительная версия · реквизиты, цены и наличие требуют подтверждения"
+              : businessConfig.brandName}
+          </div>
+          <div className="utility-links"><Link href="/contacts">Контакты</Link><Link href="/legal/delivery-payment-returns">Условия покупки</Link></div>
         </div>
       </div>
       <header className="site-header">
         <div className="container header-inner">
           <button className="mobile-menu-button" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Открыть меню"><Menu /></button>
-          <Link href="/" className="brand-logo" aria-label="Apex Wheels">
+          <Link href="/" className="brand-logo" aria-label={businessConfig.brandName}>
             <span className="logo-mark"><i /><i /><i /></span>
-            <span>APEX<small>WHEELS</small></span>
+            <BrandWordmark />
           </Link>
           <nav className={mobileMenu ? "main-nav open" : "main-nav"}>
             <button onClick={() => { setFilters((f) => ({ ...f, kind: "tire" })); scrollToCatalog(); setMobileMenu(false); }}>Шины</button>
             <button onClick={() => { setFilters((f) => ({ ...f, kind: "wheel", seasons: [], width: "", profile: "" })); scrollToCatalog(); setMobileMenu(false); }}>Диски</button>
             <button onClick={() => { setSelectorTab("car"); document.getElementById("selector")?.scrollIntoView({ behavior: "smooth" }); setMobileMenu(false); }}>По автомобилю</button>
-            <a href="#services" onClick={() => setMobileMenu(false)}>Шиномонтаж</a>
-            <a href="#about" onClick={() => setMobileMenu(false)}>О нас</a>
+            {businessConfig.services.tireService && <a href="#services" onClick={() => setMobileMenu(false)}>Шиномонтаж</a>}
+            <Link href="/contacts" onClick={() => setMobileMenu(false)}>Контакты</Link>
           </nav>
-          <div className="header-contact"><span>Ежедневно 9:00–21:00</span><a href="tel:+78005509887">8 800 550-98-87</a></div>
+          <div className="header-contact">
+            {businessConfig.workingHours && <span>{businessConfig.workingHours}</span>}
+            {businessConfig.contacts.phone ? (
+              <a href={normalizeTelephoneHref(businessConfig.contacts.phone)}>{businessConfig.contacts.phone}</a>
+            ) : (
+              <Link href="/contacts">Контактные данные</Link>
+            )}
+          </div>
           <div className="header-actions">
             <button aria-label="Сравнение" onClick={() => setCollection("compare")}><GitCompareArrows />{compare.length > 0 && <b>{compare.length}</b>}<span>Сравнить</span></button>
             <button aria-label="Избранное" onClick={() => setCollection("favorites")}><Heart />{favorites.length > 0 && <b>{favorites.length}</b>}<span>Избранное</span></button>
@@ -1219,11 +1261,11 @@ export function Storefront() {
           <div className="hero-copy">
             <span className="hero-kicker"><Sparkles size={15} /> Новый уровень подбора</span>
             <h1>Держим<br /><em>дорогу.</em></h1>
-            <p>Точные шины и диски для вашего автомобиля. Проверка совместимости и доставка по Барнаулу.</p>
+            <p>Каталог шин и дисков с подбором по параметрам и автомобилю в {businessConfig.location.city}.</p>
             <div className="hero-proof">
-              <span><strong>12 лет</strong> экспертизы</span>
-              <span><strong>4.9 / 5</strong> рейтинг</span>
-              <span><strong>24 000+</strong> клиентов</span>
+              <span><strong>Размер</strong> ширина, профиль, диаметр</span>
+              <span><strong>Автомобиль</strong> марка и модель</span>
+              <span><strong>Без регистрации</strong> гостевой заказ</span>
             </div>
           </div>
           <div className="selector-card" id="selector">
@@ -1342,6 +1384,12 @@ export function Storefront() {
                   Точная применяемость шин и дисков появится после загрузки таблицы
                   соответствий из 1С.
                 </p>
+                <FitmentRequestForm
+                  initialMake={carBrand}
+                  initialModel={carModel}
+                  initialYear={carYear}
+                  initialGeneration={carGeneration}
+                />
               </div>
             )}
             <button
@@ -1362,10 +1410,10 @@ export function Storefront() {
 
       <section className="trust-bar">
         <div className="container trust-grid">
-          <div><span><ShieldCheck /></span><p><strong>Гарантия совместимости</strong>Проверим каждую позицию</p></div>
-          <div><span><Truck /></span><p><strong>Доставка по Барнаулу</strong>Срок подтвердит менеджер</p></div>
-          <div><span><Wrench /></span><p><strong>Монтаж без очереди</strong>Запись вместе с заказом</p></div>
-          <div><span><PackageCheck /></span><p><strong>90 дней на возврат</strong>Если товар не устанавливался</p></div>
+          <div><span><SlidersHorizontal /></span><p><strong>По параметрам</strong>Фильтры по размерам</p></div>
+          <div><span><Car /></span><p><strong>По автомобилю</strong>Классический подбор без AI</p></div>
+          <div><span><ShoppingBag /></span><p><strong>Гостевой заказ</strong>Регистрация необязательна</p></div>
+          <div><span><BadgeCheck /></span><p><strong>Проверяемые данные</strong>Применяемость хранит источник</p></div>
         </div>
       </section>
 
@@ -1375,7 +1423,7 @@ export function Storefront() {
             <div>
               <p className="eyebrow">Каталог</p>
               <h2>Подбор без компромиссов</h2>
-              <p>Только проверенные бренды, актуальные остатки и честные характеристики.</p>
+              <p>{businessConfig.catalog.dataMode === "preview" ? "Демонстрационные товары для согласования интерфейса. Цены и наличие не являются коммерческим предложением." : "Актуальные цены и наличие поступают из базы магазина."}</p>
             </div>
             <div className="catalog-search">
               <Search size={18} />
@@ -1433,10 +1481,10 @@ export function Storefront() {
                 <span>Найдено <strong>{filteredProducts.length}</strong></span>
                 <label>Сортировка
                   <select value={filters.sort} onChange={(e) => setFilters((f) => ({ ...f, sort: e.target.value as CatalogFilters["sort"] }))}>
-                    <option value="popular">По популярности</option>
+                    <option value="popular">Рекомендуемые</option>
                     <option value="price-asc">Сначала дешевле</option>
                     <option value="price-desc">Сначала дороже</option>
-                    <option value="rating">По рейтингу</option>
+                    {businessConfig.catalog.ratingsEnabled && <option value="rating">По рейтингу</option>}
                   </select>
                 </label>
               </div>
@@ -1464,64 +1512,52 @@ export function Storefront() {
         </div>
       </section>
 
-      <section className="service-section" id="services">
+      {businessConfig.services.tireService && <section className="service-section" id="services">
         <div className="container service-grid">
           <div className="service-visual">
             <span className="service-number">01</span>
             <div className="service-wheel"><span /><i /><i /><i /><i /><i /></div>
-            <div className="service-caption"><strong>APEX CARE</strong><span>Сервис, которому доверяют</span></div>
+            <div className="service-caption"><strong>{businessConfig.brandName}</strong><span>Шиномонтаж</span></div>
           </div>
           <div className="service-copy">
             <p className="eyebrow">Сервис полного цикла</p>
             <h2>Не просто продаём.<br />Отвечаем за результат.</h2>
-            <p>Эксперт проверит размер, индекс нагрузки, вылет и посадочные параметры. Привезём комплект в сервис и установим в удобное время.</p>
+            <p>Возможность монтажа и условия работ подтверждаются при обработке заказа.</p>
             <div className="service-steps">
               <div><span>01</span><p><strong>Подбор</strong>По VIN или параметрам автомобиля</p></div>
-              <div><span>02</span><p><strong>Проверка</strong>Двойной контроль совместимости</p></div>
-              <div><span>03</span><p><strong>Установка</strong>Монтаж с гарантией работ</p></div>
+              <div><span>02</span><p><strong>Проверка</strong>Контроль параметров автомобиля</p></div>
+              <div><span>03</span><p><strong>Установка</strong>Условия подтвердит менеджер</p></div>
             </div>
             <button className="dark-outline-button" onClick={() => { setSelectorTab("car"); document.getElementById("selector")?.scrollIntoView({ behavior: "smooth" }); }}>Подобрать по автомобилю <ArrowRight size={17} /></button>
           </div>
         </div>
-      </section>
+      </section>}
 
-      <section className="consult-section">
+      {businessConfig.contacts.phone && <section className="consult-section">
         <div className="container consult-inner">
           <div>
             <p className="eyebrow">Остались вопросы?</p>
-            <h2>Эксперт перезвонит<br />за 5 минут</h2>
+            <h2>Свяжитесь<br />с магазином</h2>
           </div>
-          <div className="consult-copy"><p>Поможем с размером, бюджетом и датой монтажа. Без навязчивых продаж.</p><a href="tel:+78005509887"><Phone size={17} /> 8 800 550-98-87</a></div>
-          <form onSubmit={(event) => { event.preventDefault(); notify("Спасибо! Эксперт скоро позвонит"); (event.currentTarget as HTMLFormElement).reset(); }}>
-            <input name="phone" required type="tel" placeholder="+7 (___) ___-__-__" aria-label="Номер телефона" />
-            <label className="consent-row consult-consent">
-              <input name="personalDataConsent" type="checkbox" required />
-              <span>
-                Даю отдельное{" "}
-                <Link href="/legal/personal-data-consent" target="_blank">
-                  согласие на обработку персональных данных
-                </Link>
-                .
-              </span>
-            </label>
-            <button className="light-button">Перезвоните мне <ArrowRight size={17} /></button>
-          </form>
+          <div className="consult-copy"><p>Уточните наличие, параметры товара и доступные способы получения.</p><a href={normalizeTelephoneHref(businessConfig.contacts.phone)}><Phone size={17} /> {businessConfig.contacts.phone}</a></div>
+          <Link className="light-button" href="/contacts">Все способы связи <ArrowRight size={17} /></Link>
         </div>
-      </section>
+      </section>}
 
       <footer id="about">
         <div className="container footer-grid">
           <div className="footer-brand">
-            <Link href="/" className="brand-logo light"><span className="logo-mark"><i /><i /><i /></span><span>APEX<small>WHEELS</small></span></Link>
-            <p>Шины и диски с проверкой совместимости. Работаем только в Барнауле.</p>
-            <strong>8 800 550-98-87</strong>
-            <span>Ежедневно с 9:00 до 21:00</span>
+            <Link href="/" className="brand-logo light"><span className="logo-mark"><i /><i /><i /></span><BrandWordmark /></Link>
+            <p>Каталог шин и дисков в {businessConfig.location.city}.</p>
+            {businessConfig.contacts.phone && <strong>{businessConfig.contacts.phone}</strong>}
+            {businessConfig.workingHours && <span>{businessConfig.workingHours}</span>}
+            {!businessConfig.contacts.phone && <span>Контакты требуют заполнения до запуска</span>}
           </div>
-          <div><h4>Каталог</h4><button onClick={() => { setFilters((f) => ({ ...f, kind: "tire" })); scrollToCatalog(); }}>Шины</button><button onClick={() => { setFilters((f) => ({ ...f, kind: "wheel" })); scrollToCatalog(); }}>Диски</button><button onClick={() => { setSelectorTab("car"); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Подбор по авто</button><a href="#services">Шиномонтаж</a></div>
+          <div><h4>Каталог</h4><button onClick={() => { setFilters((f) => ({ ...f, kind: "tire" })); scrollToCatalog(); }}>Шины</button><button onClick={() => { setFilters((f) => ({ ...f, kind: "wheel" })); scrollToCatalog(); }}>Диски</button><button onClick={() => { setSelectorTab("car"); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Подбор по авто</button>{businessConfig.services.tireService && <a href="#services">Шиномонтаж</a>}</div>
           <div><h4>Покупателям</h4><Link href="/legal/delivery-payment-returns">Доставка и оплата</Link><Link href="/legal/delivery-payment-returns">Гарантия и возврат</Link><Link href="/legal/offer">Публичная оферта</Link><Link href="/legal/terms">Правила пользования</Link></div>
-          <div><h4>Компания</h4><Link href="/legal/requisites">Реквизиты и контакты</Link><Link href="/legal/privacy">Персональные данные</Link><button type="button" onClick={openCookieSettings}>Настройки cookie</button><Link href="/admin">Apex Control</Link></div>
+          <div><h4>Компания</h4><Link href="/contacts">Контакты</Link><Link href="/legal/requisites">Реквизиты</Link><Link href="/legal/privacy">Персональные данные</Link><button type="button" onClick={openCookieSettings}>Настройки cookie</button><Link href="/admin">Панель управления</Link></div>
         </div>
-        <div className="container footer-bottom"><span>© 2026 APEX WHEELS</span><Link href="/legal">Правовая информация</Link><Link href="/legal/privacy">Политика конфиденциальности</Link></div>
+        <div className="container footer-bottom"><span>© 2026 {businessConfig.brandName}</span><Link href="/legal">Правовая информация</Link><Link href="/legal/privacy">Политика конфиденциальности</Link></div>
       </footer>
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />

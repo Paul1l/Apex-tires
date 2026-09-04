@@ -74,6 +74,7 @@ test("order total is calculated from locked backend prices", async () => {
   const service = new OrderService({
     pool: pool as unknown as Pool,
     orderRepository,
+    enabledDeliveryMethods: ["pickup"],
   });
 
   const order = await service.createOrder({
@@ -86,6 +87,7 @@ test("order total is calculated from locked backend prices", async () => {
       },
     ],
     delivery: { method: "pickup" },
+    requiresTireService: false,
   });
 
   assert.equal(createdOrderInput?.totalKopecks, 49_380);

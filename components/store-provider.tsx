@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { seedProducts } from "@/lib/catalog-data";
+import { businessConfig } from "@/config/business";
 import type { CartLine, Product, UserProfile } from "@/lib/types";
 
 interface StoreContextValue {
@@ -59,7 +60,10 @@ function readBrowserStorage<T>(key: string, fallbackValue: T): T {
  * by the server OTP API; only a display-safe profile is cached locally.
  */
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const [products, setProducts] = useState<Product[]>(seedProducts);
+  const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
+  const [products, setProducts] = useState<Product[]>(
+    catalogIsPreview ? seedProducts : [],
+  );
   const [cart, setCart] = useState<CartLine[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [compare, setCompare] = useState<string[]>([]);
@@ -67,9 +71,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setProducts(
-      readBrowserStorage(BROWSER_STORAGE_KEYS.products, seedProducts),
-    );
+    if (catalogIsPreview) {
+      setProducts(
+        readBrowserStorage(BROWSER_STORAGE_KEYS.products, seedProducts),
+      );
+    } else {
+      setProducts([]);
+      void fetch("/api/v1/products", { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Catalog request failed");
+          const result = (await response.json()) as { items?: Product[] };
+          setProducts(result.items ?? []);
+        })
+        .catch(() => setProducts([]));
+    }
     setCart(readBrowserStorage(BROWSER_STORAGE_KEYS.cart, []));
     setFavorites(
       readBrowserStorage(BROWSER_STORAGE_KEYS.favorites, []),
@@ -96,14 +111,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {
         // A temporary API outage must not break the rest of the SPA.
       });
-  }, []);
+  }, [catalogIsPreview]);
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(
-      BROWSER_STORAGE_KEYS.products,
-      JSON.stringify(products),
-    );
+    if (catalogIsPreview) {
+      localStorage.setItem(
+        BROWSER_STORAGE_KEYS.products,
+        JSON.stringify(products),
+      );
+    }
     localStorage.setItem(
       BROWSER_STORAGE_KEYS.cart,
       JSON.stringify(cart),
@@ -120,7 +137,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       BROWSER_STORAGE_KEYS.user,
       JSON.stringify(user),
     );
-  }, [products, cart, favorites, compare, user, hydrated]);
+  }, [products, cart, favorites, compare, user, hydrated, catalogIsPreview]);
 
   const addToCart = useCallback((productId: string, quantity = 1) => {
     setCart((current) => {

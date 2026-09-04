@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { businessConfig } from "@/config/business";
 import {
   legalDocumentBySlug,
   legalDocuments,
@@ -26,7 +27,7 @@ export async function generateMetadata({
   }
 
   return {
-    title: `${document.shortTitle} — APEX WHEELS`,
+    title: document.shortTitle,
     description: document.description,
   };
 }
@@ -45,7 +46,7 @@ export default async function LegalDocumentPage({
     <main className="legal-shell">
       <header className="legal-header">
         <Link href="/" className="legal-brand">
-          APEX <span>WHEELS</span>
+          {businessConfig.brandName}
         </Link>
         <nav aria-label="Навигация по юридическому разделу">
           <Link href="/legal">Все документы</Link>

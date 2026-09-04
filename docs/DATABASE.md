@@ -5,7 +5,8 @@
 Production read model и первичное хранилище backend — PostgreSQL. Схема
 создается воспроизводимой миграцией:
 
-`server/database/migrations/001_initial_postgresql.sql`.
+`server/database/migrations/001_initial_postgresql.sql` и
+`002_local_business_readiness.sql`.
 
 Реальная база пока не развернута и строка подключения не хранится в
 репозитории. Для магазина с персональными данными PostgreSQL и backend должны
@@ -37,6 +38,9 @@ Runner берет advisory lock, выполняет каждый новый SQL-
 | `integration_sync_logs` | итоги и идемпотентность обменов |
 | `integration_sync_errors` | безопасные ошибки отдельных записей |
 | `admin_audit_log` | аудит административных действий |
+| `used_product_lots`, `used_product_lot_images` | конкретные б/у комплекты и их реальные фотографии |
+| `vehicle_fitment_requests` | запросы покупателей по отсутствующим автомобилям |
+| `notification_outbox` | надежная очередь email/Telegram без отправки из HTTP-транзакции |
 
 ## Идентификаторы и деньги
 

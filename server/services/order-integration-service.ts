@@ -50,6 +50,7 @@ function mapOrderForOneC(order: IntegrationOrderRow): JsonValue {
       method: order.delivery_method,
       address: order.delivery_address,
     },
+    requiresTireService: order.requires_tire_service,
     comment: order.comment,
     status: order.status,
     paymentStatus: order.payment_status,

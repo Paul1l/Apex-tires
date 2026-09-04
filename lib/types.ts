@@ -1,11 +1,16 @@
 export type ProductKind = "tire" | "wheel";
 export type Season = "summer" | "winter" | "all-season" | "none";
+export type ProductCondition = "new" | "used";
+export type UsedConditionGrade = "excellent" | "good" | "acceptable";
+export type WheelType = "alloy" | "steel" | "other";
+export type DeliveryMethod = "pickup" | "courier" | "transport_company";
 
 export interface Product {
   id: string;
   sku: string;
   externalId?: string;
   kind: ProductKind;
+  condition: ProductCondition;
   brand: string;
   model: string;
   subtitle: string;
@@ -15,21 +20,33 @@ export interface Product {
   season: Season;
   studded: boolean;
   runflat: boolean;
+  xl?: boolean;
+  wheelType?: WheelType;
   pcd?: string;
   offset?: number;
   centerBore?: number;
   color?: string;
   price: number;
   oldPrice?: number;
+  discount?: number;
+  priceUpdatedAt: string;
   stock: number;
   reserved: number;
   warehouse: string;
-  rating: number;
-  reviews: number;
+  rating?: number;
+  reviews?: number;
   tags: string[];
   country: string;
   featured?: boolean;
   image?: string;
+  manufactureYear?: number;
+  treadDepth?: number;
+  conditionGrade?: UsedConditionGrade;
+  repairs?: string;
+  defects?: string;
+  conditionComment?: string;
+  setQuantity?: number;
+  individualPhotos?: string[];
   compatibleCars: string[];
   updatedAt: string;
 }

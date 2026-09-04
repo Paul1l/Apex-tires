@@ -36,6 +36,7 @@ export interface PersistedOrderInput extends Omit<CreateOrderInput, "items"> {
   subtotalKopecks: number;
   deliveryKopecks: number;
   totalKopecks: number;
+  managerNotificationEmail?: string;
 }
 
 interface IntegrationOrderItemRow {
@@ -63,6 +64,7 @@ export interface IntegrationOrderRow {
   delivery_method: string;
   delivery_address: string | null;
   comment: string | null;
+  requires_tire_service: boolean;
   created_at: Date | string;
   items: IntegrationOrderItemRow[];
 }
@@ -143,8 +145,9 @@ export class OrderRepository {
       `INSERT INTO orders (
          number, checkout_idempotency_key, customer_name, customer_email,
          customer_phone, subtotal_kopecks, discount_kopecks, delivery_kopecks,
-         total_kopecks, delivery_method, delivery_address, comment
-       ) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11)
+         total_kopecks, delivery_method, delivery_address, comment,
+         requires_tire_service
+       ) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11, $12)
        RETURNING id, number, status, integration_status, total_kopecks, created_at`,
       [
         orderNumber,
@@ -158,6 +161,7 @@ export class OrderRepository {
         order.delivery.method,
         order.delivery.address ?? null,
         order.comment ?? null,
+        order.requiresTireService,
       ],
     );
     const createdOrder = orderResult.rows[0];
@@ -196,6 +200,7 @@ export class OrderRepository {
       deliveryPrice: order.deliveryKopecks / 100,
       total: order.totalKopecks / 100,
       delivery: order.delivery,
+      requiresTireService: order.requiresTireService,
       comment: order.comment ?? null,
       status: "new",
       paymentStatus: "pending",
@@ -211,6 +216,33 @@ export class OrderRepository {
         JSON.stringify(integrationPayload),
       ],
     );
+
+    if (order.customer.email) {
+      await database.query(
+        `INSERT INTO notification_outbox (channel, template, recipient, payload)
+         VALUES ('email', 'customer-order-created', $1, $2::jsonb)`,
+        [
+          order.customer.email,
+          JSON.stringify({
+            orderId: createdOrder.id,
+            orderNumber: createdOrder.number,
+          }),
+        ],
+      );
+    }
+    if (order.managerNotificationEmail) {
+      await database.query(
+        `INSERT INTO notification_outbox (channel, template, recipient, payload)
+         VALUES ('email', 'manager-order-created', $1, $2::jsonb)`,
+        [
+          order.managerNotificationEmail,
+          JSON.stringify({
+            orderId: createdOrder.id,
+            orderNumber: createdOrder.number,
+          }),
+        ],
+      );
+    }
 
     return createdOrder;
   }
@@ -261,7 +293,7 @@ export class OrderRepository {
       `SELECT id, number, customer_name, customer_email, customer_phone,
               status, payment_status, subtotal_kopecks, discount_kopecks,
               delivery_kopecks, total_kopecks, delivery_method,
-              delivery_address, comment, created_at
+              delivery_address, comment, requires_tire_service, created_at
        FROM orders
        WHERE integration_status IN ('pending', 'failed')
        ORDER BY created_at ASC

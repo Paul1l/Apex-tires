@@ -8,11 +8,9 @@ import {
   Boxes,
   Check,
   ChevronRight,
-  CircleDollarSign,
   CloudCog,
   Database,
   Download,
-  Eye,
   FileJson,
   Gauge,
   LayoutDashboard,
@@ -26,9 +24,7 @@ import {
   Settings,
   ShoppingCart,
   Trash2,
-  TrendingUp,
   Upload,
-  Users,
   X,
 } from "lucide-react";
 import {
@@ -39,6 +35,8 @@ import {
   useState,
 } from "react";
 import { formatPrice, seasonLabels } from "@/lib/catalog-data";
+import { businessConfig, getSellerDisplayName } from "@/config/business";
+import { validateBusinessConfig } from "@/config/business-validation";
 import { INITIAL_CATALOG_CAPACITY } from "@/lib/store-config";
 import type { Product, ProductKind, Season } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
@@ -70,6 +68,7 @@ const blankProduct: Product = {
   id: "",
   sku: "",
   kind: "tire",
+  condition: "new",
   brand: "",
   model: "",
   subtitle: "",
@@ -80,24 +79,15 @@ const blankProduct: Product = {
   studded: false,
   runflat: false,
   price: 0,
+  priceUpdatedAt: new Date().toISOString(),
   stock: 0,
   reserved: 0,
-  warehouse: "Барнаул · Основной склад",
-  rating: 5,
-  reviews: 0,
+  warehouse: "",
   tags: [],
   country: "",
   compatibleCars: [],
   updatedAt: new Date().toISOString(),
 };
-
-const demoOrders = [
-  { id: "AW-10482", customer: "Андрей Волков", date: "30 июл, 10:24", amount: 73960, status: "Новый", items: "Michelin Pilot Sport 5 × 4" },
-  { id: "AW-10481", customer: "Мария Орлова", date: "30 июл, 09:41", amount: 87560, status: "Комплектуется", items: "Rial Lucca × 4" },
-  { id: "AW-10480", customer: "Илья Смирнов", date: "29 июл, 18:12", amount: 51560, status: "Доставлен", items: "Continental PremiumContact 7 × 4" },
-  { id: "AW-10479", customer: "Никита Павлов", date: "29 июл, 15:03", amount: 67960, status: "Доставлен", items: "Ikon Hakkapeliitta 10 × 4" },
-  { id: "AW-10478", customer: "Елена Коваль", date: "29 июл, 11:37", amount: 89960, status: "Отменён", items: "Goodyear Eagle F1 × 4" },
-];
 
 function MiniArt({ product }: { product: Product }) {
   if (product.image) {
@@ -122,7 +112,7 @@ function AdminLogin() {
     <main className="admin-login-page">
       <Link href="/" className="admin-back"><ArrowLeft size={17} /> Вернуться в магазин</Link>
       <section className="admin-login-card">
-        <div className="admin-login-brand"><span className="admin-brand-mark"><i /><i /><i /></span><strong>APEX</strong><small>CONTROL</small></div>
+        <div className="admin-login-brand"><span className="admin-brand-mark"><i /><i /><i /></span><strong>{businessConfig.brandName}</strong><small>CONTROL</small></div>
         <p className="eyebrow">Закрытая зона</p>
         <h1>Управление магазином</h1>
         <p>Каталог, заказы, остатки и синхронизация с 1С в одном интерфейсе.</p>
@@ -157,7 +147,7 @@ function ProductEditor({
   function readImage(file?: File) {
     if (!file) return;
     if (file.size > 2_500_000) {
-      window.alert("Для демо используйте изображение до 2,5 МБ.");
+      window.alert("Для предпросмотра используйте изображение до 2,5 МБ.");
       return;
     }
     const reader = new FileReader();
@@ -178,6 +168,10 @@ function ProductEditor({
           ? `${draft.width}/${draft.profile} R${draft.diameter}`
           : `R${draft.diameter} ${draft.pcd || ""}`.trim()),
       updatedAt: new Date().toISOString(),
+      priceUpdatedAt:
+        draft.price === product.price
+          ? draft.priceUpdatedAt
+          : new Date().toISOString(),
     };
     saveProduct(normalized);
     setDraft(normalized);
@@ -205,6 +199,7 @@ function ProductEditor({
           {draft.image && <button type="button" className="remove-image" onClick={() => update("image", undefined)}>Удалить изображение</button>}
           <div className="admin-form-grid">
             <label><span>Тип товара</span><select value={draft.kind} onChange={(e) => update("kind", e.target.value as ProductKind)}><option value="tire">Шина</option><option value="wheel">Диск</option></select></label>
+            {businessConfig.catalog.usedProductsEnabled && <label><span>Состояние</span><select value={draft.condition} onChange={(e) => update("condition", e.target.value as Product["condition"])}><option value="new">Новый</option><option value="used">Б/у комплект</option></select></label>}
             <label><span>Артикул</span><input value={draft.sku} onChange={(e) => update("sku", e.target.value)} placeholder="Будет создан автоматически" /></label>
             <label><span>ID в 1С</span><input value={draft.externalId || ""} onChange={(e) => update("externalId", e.target.value)} placeholder="1C-000001" /></label>
             <label><span>Бренд *</span><input value={draft.brand} onChange={(e) => update("brand", e.target.value)} required /></label>
@@ -223,13 +218,14 @@ function ProductEditor({
                 <label><span>Разболтовка</span><input value={draft.pcd || ""} onChange={(e) => update("pcd", e.target.value)} placeholder="5×112" /></label>
                 <label><span>Вылет ET</span><input type="number" value={draft.offset || 0} onChange={(e) => update("offset", Number(e.target.value))} /></label>
                 <label><span>Цвет</span><input value={draft.color || ""} onChange={(e) => update("color", e.target.value)} /></label>
+                <label><span>Тип диска</span><select value={draft.wheelType || "alloy"} onChange={(e) => update("wheelType", e.target.value as Product["wheelType"])}><option value="alloy">Литой</option><option value="steel">Штампованный</option><option value="other">Другой подтвержденный тип</option></select></label>
               </>
             )}
             <label><span>Цена, ₽ *</span><input type="number" min="0" value={draft.price} onChange={(e) => update("price", Number(e.target.value))} required /></label>
             <label><span>Старая цена, ₽</span><input type="number" min="0" value={draft.oldPrice || ""} onChange={(e) => update("oldPrice", e.target.value ? Number(e.target.value) : undefined)} /></label>
             <label><span>Остаток</span><input type="number" min="0" value={draft.stock} onChange={(e) => update("stock", Number(e.target.value))} /></label>
             <label><span>Резерв</span><input type="number" min="0" value={draft.reserved} onChange={(e) => update("reserved", Number(e.target.value))} /></label>
-            <label><span>Склад</span><select value={draft.warehouse} onChange={(e) => update("warehouse", e.target.value)}><option>Барнаул · Основной склад</option></select></label>
+            <label><span>Склад</span><input value={draft.warehouse} onChange={(e) => update("warehouse", e.target.value)} placeholder="Название из 1С или БД" /></label>
             <label><span>Страна</span><input value={draft.country} onChange={(e) => update("country", e.target.value)} /></label>
             <label className="wide"><span>Совместимые модели — через запятую</span><input value={draft.compatibleCars.join(", ")} onChange={(e) => update("compatibleCars", e.target.value.split(",").map((value) => value.trim()).filter(Boolean))} placeholder="BMW 3 Series, Audi A4" /></label>
           </div>
@@ -237,7 +233,16 @@ function ProductEditor({
             <label><input type="checkbox" checked={draft.featured || false} onChange={(e) => update("featured", e.target.checked)} /> Рекомендуемый товар</label>
             {draft.kind === "tire" && <label><input type="checkbox" checked={draft.studded} onChange={(e) => update("studded", e.target.checked)} /> Шипованный</label>}
             {draft.kind === "tire" && <label><input type="checkbox" checked={draft.runflat} onChange={(e) => update("runflat", e.target.checked)} /> RunFlat</label>}
+            {draft.kind === "tire" && <label><input type="checkbox" checked={draft.xl || false} onChange={(e) => update("xl", e.target.checked)} /> XL</label>}
           </div>
+          {businessConfig.catalog.usedProductsEnabled && draft.condition === "used" && (
+            <div className="admin-form-grid">
+              <label><span>Год производства</span><input type="number" min="1900" max="2200" value={draft.manufactureYear || ""} onChange={(e) => update("manufactureYear", e.target.value ? Number(e.target.value) : undefined)} /></label>
+              <label><span>Остаток протектора, мм</span><input type="number" min="0" step="0.1" value={draft.treadDepth || ""} onChange={(e) => update("treadDepth", e.target.value ? Number(e.target.value) : undefined)} /></label>
+              <label><span>Количество в комплекте</span><input type="number" min="1" value={draft.setQuantity || ""} onChange={(e) => update("setQuantity", e.target.value ? Number(e.target.value) : undefined)} /></label>
+              <label className="wide"><span>Ремонты и дефекты</span><input value={draft.defects || ""} onChange={(e) => update("defects", e.target.value)} placeholder="Указать фактическое состояние" /></label>
+            </div>
+          )}
         </div>
         <div className="admin-editor-footer">
           <button type="button" className="admin-secondary-button" onClick={onClose}>Отмена</button>
@@ -250,49 +255,21 @@ function ProductEditor({
 
 function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
   const { products } = useStore();
-  const totalStock = products.reduce((sum, item) => sum + item.stock - item.reserved, 0);
-  const inventoryValue = products.reduce((sum, item) => sum + item.price * Math.max(0, item.stock - item.reserved), 0);
-  const lowStock = products.filter((item) => item.stock - item.reserved <= 6);
-  const bars = [42, 55, 39, 64, 58, 72, 61, 79, 68, 86, 74, 92];
+  const configurationIssues = validateBusinessConfig(businessConfig);
 
   return (
     <>
       <div className="admin-page-intro">
-        <div><p className="eyebrow">30 июля 2026</p><h1>Добрый день, Александр</h1><span>Вот что происходит в магазине прямо сейчас.</span></div>
+        <div><p className="eyebrow">Production readiness</p><h1>Состояние магазина</h1><span>Только фактические данные и статусы подключений.</span></div>
         <button className="admin-primary-button" onClick={() => onNavigate("products")}><Plus size={17} /> Добавить товар</button>
       </div>
       <div className="admin-kpi-grid">
-        <article><span className="admin-kpi-icon green"><CircleDollarSign /></span><div><p>Продажи за месяц</p><strong>3 842 760 ₽</strong><small className="positive"><TrendingUp size={13} /> 12,8% к июню</small></div></article>
-        <article><span className="admin-kpi-icon sand"><ShoppingCart /></span><div><p>Заказы</p><strong>184</strong><small>23 требуют внимания</small></div></article>
-        <article><span className="admin-kpi-icon blue"><Boxes /></span><div><p>Остаток на складах</p><strong>{totalStock} шт.</strong><small>{formatPrice(inventoryValue)} в товарах</small></div></article>
-        <article><span className="admin-kpi-icon violet"><Users /></span><div><p>Новые клиенты</p><strong>96</strong><small className="positive"><TrendingUp size={13} /> 8,4% за месяц</small></div></article>
+        <article><span className="admin-kpi-icon green"><Boxes /></span><div><p>Каталог</p><strong>{products.length}</strong><small>{businessConfig.catalog.dataMode === "database" ? "Источник: PostgreSQL" : "Демонстрационные позиции"}</small></div></article>
+        <article><span className="admin-kpi-icon sand"><ShoppingCart /></span><div><p>Заказы</p><strong>—</strong><small>Появятся после подключения PostgreSQL</small></div></article>
+        <article><span className="admin-kpi-icon blue"><Database /></span><div><p>Бизнес-данные</p><strong>{configurationIssues.length === 0 ? "Готово" : `${configurationIssues.length} полей`}</strong><small>{configurationIssues.length === 0 ? "Конфигурация заполнена" : "Требуют заполнения"}</small></div></article>
+        <article><span className="admin-kpi-icon violet"><Activity /></span><div><p>Режим</p><strong>{businessConfig.deploymentStage === "production" ? "Production" : "Preview"}</strong><small>Без вымышленных показателей</small></div></article>
       </div>
-      <div className="admin-dashboard-grid">
-        <article className="admin-card sales-card">
-          <div className="admin-card-head"><div><p className="eyebrow">Динамика продаж</p><h2>1 284 900 ₽ <small>за 14 дней</small></h2></div><select defaultValue="14"><option value="14">14 дней</option><option value="30">30 дней</option></select></div>
-          <div className="sales-chart">
-            <div className="chart-y"><span>120k</span><span>80k</span><span>40k</span><span>0</span></div>
-            <div className="chart-bars">{bars.map((height, index) => <span key={index} style={{ height: `${height}%` }}><i>{index === 11 ? "112k" : ""}</i></span>)}</div>
-          </div>
-          <div className="chart-labels"><span>17 июл</span><span>21 июл</span><span>25 июл</span><span>30 июл</span></div>
-        </article>
-        <article className="admin-card stock-alerts">
-          <div className="admin-card-head"><div><p className="eyebrow">Контроль остатков</p><h2>Заканчиваются</h2></div><button onClick={() => onNavigate("products")}>Все товары <ChevronRight size={16} /></button></div>
-          <div className="stock-alert-list">
-            {lowStock.slice(0, 4).map((product) => (
-              <div key={product.id}><MiniArt product={product} /><p><strong>{product.brand} {product.model}</strong><span>{product.subtitle}</span></p><b className={product.stock - product.reserved <= 4 ? "critical" : ""}>{product.stock - product.reserved} шт.</b></div>
-            ))}
-          </div>
-        </article>
-      </div>
-      <article className="admin-card recent-orders">
-        <div className="admin-card-head"><div><p className="eyebrow">Операции</p><h2>Последние заказы</h2></div><button onClick={() => onNavigate("orders")}>Смотреть все <ChevronRight size={16} /></button></div>
-        <div className="admin-table-wrap">
-          <table className="admin-table"><thead><tr><th>Заказ</th><th>Клиент</th><th>Состав</th><th>Сумма</th><th>Статус</th><th /></tr></thead><tbody>
-            {demoOrders.slice(0, 4).map((order) => <tr key={order.id}><td><strong>{order.id}</strong><small>{order.date}</small></td><td>{order.customer}</td><td>{order.items}</td><td><strong>{formatPrice(order.amount)}</strong></td><td><span className={`order-status ${order.status.toLowerCase()}`}>{order.status}</span></td><td><button><Eye size={17} /></button></td></tr>)}
-          </tbody></table>
-        </div>
-      </article>
+      <article className="admin-card recent-orders"><div className="admin-card-head"><div><p className="eyebrow">Заказы</p><h2>Рабочих данных пока нет</h2></div><button onClick={() => onNavigate("orders")}>Открыть раздел <ChevronRight size={16} /></button></div><p>После подключения PostgreSQL здесь будут отображаться реальные заказы. Демонстрационные покупатели и суммы удалены.</p></article>
     </>
   );
 }
@@ -341,7 +318,7 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
                 <td><strong>{formatPrice(product.price)}</strong>{product.oldPrice && <small><s>{formatPrice(product.oldPrice)}</s></small>}</td>
                 <td><span className={`inventory-pill ${product.stock - product.reserved <= 6 ? "low" : ""}`}>{product.stock - product.reserved} шт.</span><small>резерв {product.reserved}</small></td>
                 <td><code>{product.externalId || "—"}</code></td>
-                <td><span>30.07.2026</span><small>11:42</small></td>
+                <td><span>{new Date(product.updatedAt).toLocaleDateString("ru-RU")}</span><small>{new Date(product.updatedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</small></td>
                 <td><div className="admin-row-actions"><button onClick={() => onEdit(product)} aria-label="Редактировать"><Pencil size={16} /></button><button className="danger" onClick={() => { if (window.confirm(`Удалить ${product.brand} ${product.model}?`)) deleteProduct(product.id); }} aria-label="Удалить"><Trash2 size={16} /></button></div></td>
               </tr>
             ))}</tbody>
@@ -357,14 +334,8 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
 function OrdersSection() {
   return (
     <>
-      <div className="admin-page-intro"><div><p className="eyebrow">Продажи · демо-данные</p><h1>Заказы</h1><span>Макет обработки и статусов. Реальные заявки пока не сохраняются.</span></div><button className="admin-secondary-button"><Download size={16} /> Выгрузить CSV</button></div>
-      <div className="admin-order-stats"><span><b>2</b> новых</span><span><b>6</b> комплектуются</span><span><b>9</b> в доставке</span><span><b>167</b> завершено за месяц</span></div>
-      <article className="admin-card">
-        <div className="admin-products-toolbar"><label className="admin-search"><Search size={17} /><input placeholder="Номер заказа или клиент" /></label><select><option>Все статусы</option><option>Новый</option><option>Комплектуется</option><option>Доставлен</option></select></div>
-        <div className="admin-table-wrap"><table className="admin-table orders-table"><thead><tr><th>Заказ</th><th>Клиент</th><th>Состав</th><th>Сумма</th><th>Статус</th><th>Канал</th><th /></tr></thead><tbody>
-          {demoOrders.map((order) => <tr key={order.id}><td><strong>{order.id}</strong><small>{order.date}</small></td><td><strong>{order.customer}</strong><small>+7 9•• •••-••-••</small></td><td>{order.items}</td><td><strong>{formatPrice(order.amount)}</strong></td><td><select className={`status-select ${order.status.toLowerCase()}`} defaultValue={order.status}><option>Новый</option><option>Комплектуется</option><option>В доставке</option><option>Доставлен</option><option>Отменён</option></select></td><td><span className="channel-pill">Сайт</span></td><td><button><ChevronRight size={17} /></button></td></tr>)}
-        </tbody></table></div>
-      </article>
+      <div className="admin-page-intro"><div><p className="eyebrow">Продажи</p><h1>Заказы</h1><span>Раздел подготовлен к чтению заказов из PostgreSQL.</span></div></div>
+      <article className="admin-card admin-empty"><ShoppingCart /><strong>Реальных заказов пока нет</strong><span>Демонстрационные имена, суммы и статусы удалены. После подключения защищенного admin API здесь появятся только заказы из базы данных.</span></article>
     </>
   );
 }
@@ -444,12 +415,16 @@ function SyncSection() {
 }
 
 function SettingsSection() {
+  const configurationIssues = validateBusinessConfig(businessConfig);
+  const sellerName = getSellerDisplayName();
+
   return (
     <>
-      <div className="admin-page-intro"><div><p className="eyebrow">Конфигурация</p><h1>Настройки</h1><span>Основные параметры магазина и уведомлений</span></div><button className="admin-primary-button"><Check size={17} /> Сохранить</button></div>
+      <div className="admin-page-intro"><div><p className="eyebrow">Конфигурация</p><h1>Настройки магазина</h1><span>Единый источник данных: config/business.ts и переменные окружения.</span></div></div>
       <div className="settings-grid">
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Магазин</p><h2>Общие данные</h2></div><Settings /></div><label><span>Название</span><input defaultValue="APEX WHEELS" /></label><label><span>Телефон</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Электронная почта</span><input placeholder="Заполнить после получения контактов" /></label><label><span>Город работы</span><select defaultValue="Барнаул"><option>Барнаул</option></select></label></article>
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Заказы</p><h2>Бизнес-правила</h2></div><Gauge /></div><label><span>Бесплатная доставка от, ₽</span><input type="number" defaultValue="40000" /></label><label><span>Резерв товара, часов</span><input type="number" defaultValue="24" /></label><label className="settings-switch"><span><strong>Проверка совместимости</strong><small>Блокировать отгрузку до подтверждения</small></span><input type="checkbox" defaultChecked /></label><label className="settings-switch"><span><strong>Экспорт заказов в 1С</strong><small>Станет доступен после production-настройки</small></span><input type="checkbox" disabled /></label></article>
+        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Магазин</p><h2>Публичные данные</h2></div><Settings /></div><label><span>Бренд</span><input value={businessConfig.brandName} readOnly /></label><label><span>Продавец</span><input value={sellerName ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>Телефон</span><input value={businessConfig.contacts.phone ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>Email</span><input value={businessConfig.contacts.email ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>Адрес</span><input value={businessConfig.location.address ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>График</span><input value={businessConfig.workingHours ?? ""} placeholder="Не заполнено" readOnly /></label></article>
+        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Возможности</p><h2>Подтвержденные услуги</h2></div><Gauge /></div><label className="settings-switch"><span><strong>Самовывоз</strong><small>Включать только после согласования адреса и правил</small></span><input type="checkbox" checked={businessConfig.delivery.pickup.enabled} readOnly /></label><label className="settings-switch"><span><strong>Доставка по городу</strong><small>Стоимость не задана автоматически</small></span><input type="checkbox" checked={businessConfig.delivery.cityDelivery.enabled} readOnly /></label><label className="settings-switch"><span><strong>Б/у товары</strong><small>Для комплектов используются индивидуальные фото</small></span><input type="checkbox" checked={businessConfig.catalog.usedProductsEnabled} readOnly /></label><label className="settings-switch"><span><strong>Рассрочка</strong><small>Только после подключения реального провайдера</small></span><input type="checkbox" checked={businessConfig.features.installmentEnabled} readOnly /></label></article>
+        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">До запуска</p><h2>{configurationIssues.length} пунктов требуют внимания</h2></div><Activity /></div>{configurationIssues.map((issue) => <p key={issue.field}><strong>{issue.field}</strong><br /><small>{issue.message}</small></p>)}</article>
       </div>
     </>
   );
@@ -465,7 +440,7 @@ export function AdminDashboard() {
     () => [
       { id: "overview" as Section, label: "Обзор", icon: LayoutDashboard },
       { id: "products" as Section, label: "Товары", icon: Package },
-      { id: "orders" as Section, label: "Заказы", icon: ShoppingCart, badge: 2 },
+      { id: "orders" as Section, label: "Заказы", icon: ShoppingCart },
       { id: "sync" as Section, label: "Обмен с 1С", icon: RefreshCw },
       { id: "settings" as Section, label: "Настройки", icon: Settings },
     ],
@@ -482,8 +457,8 @@ export function AdminDashboard() {
   return (
     <main className="admin-shell">
       <aside className={sidebarOpen ? "admin-sidebar open" : "admin-sidebar"}>
-        <div className="admin-sidebar-brand"><span className="admin-brand-mark"><i /><i /><i /></span><strong>APEX</strong><small>CONTROL</small><button onClick={() => setSidebarOpen(false)}><X /></button></div>
-        <nav>{navigation.map(({ id, label, icon: Icon, badge }) => <button key={id} className={section === id ? "active" : ""} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{badge && <b>{badge}</b>}</button>)}</nav>
+        <div className="admin-sidebar-brand"><span className="admin-brand-mark"><i /><i /><i /></span><strong>{businessConfig.brandName}</strong><small>CONTROL</small><button onClick={() => setSidebarOpen(false)}><X /></button></div>
+        <nav>{navigation.map(({ id, label, icon: Icon }) => <button key={id} className={section === id ? "active" : ""} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span></button>)}</nav>
         <div className="admin-sidebar-bottom">
           <div className="admin-sync-mini"><span><i />1С</span><strong>Не подключена</strong><small>Ожидает production-настройки</small></div>
           <Link href="/"><ArrowLeft size={17} /> В магазин</Link>
@@ -492,7 +467,7 @@ export function AdminDashboard() {
       <section className="admin-main">
         <header className="admin-topbar">
           <button className="admin-mobile-menu" onClick={() => setSidebarOpen(true)}><Menu /></button>
-          <div className="admin-breadcrumb">APEX CONTROL <ChevronRight size={13} /> <strong>{navigation.find((item) => item.id === section)?.label}</strong></div>
+          <div className="admin-breadcrumb">{businessConfig.brandName} CONTROL <ChevronRight size={13} /> <strong>{navigation.find((item) => item.id === section)?.label}</strong></div>
           <div className="admin-topbar-actions">
             <button className="admin-sync-button" onClick={() => navigate("sync")}><RefreshCw size={16} /> <span>1С: настройка</span></button>
             <button className="admin-user-button"><span>{user.name.slice(0, 1)}</span><p><strong>{user.name}</strong><small>Администратор</small></p></button>

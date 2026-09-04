@@ -1,3 +1,5 @@
+import type { DeliveryMethod } from "@/lib/types";
+
 interface CreateOrderInput {
   idempotencyKey: string;
   customer: {
@@ -7,9 +9,10 @@ interface CreateOrderInput {
   };
   items: Array<{ productId: string; quantity: number }>;
   delivery: {
-    method: "pickup" | "courier";
+    method: DeliveryMethod;
     address?: string;
   };
+  requiresTireService: boolean;
   comment?: string;
 }
 
