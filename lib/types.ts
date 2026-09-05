@@ -9,6 +9,7 @@ export interface Product {
   id: string;
   sku: string;
   externalId?: string;
+  slug?: string;
   kind: ProductKind;
   condition: ProductCondition;
   brand: string;
@@ -64,6 +65,11 @@ export interface UserProfile {
   role: "customer" | "manager" | "admin";
 }
 
+export interface ProductDetails extends Product {
+  name: string;
+  description: string;
+}
+
 export interface CatalogFilters {
   kind: "all" | ProductKind;
   seasons: Season[];
@@ -80,6 +86,7 @@ export interface CatalogFilters {
   carModel: string;
   carYear: string;
   carGeneration: string;
+  carModification?: string;
   query: string;
   sort: "popular" | "price-asc" | "price-desc" | "rating";
 }

@@ -6,6 +6,7 @@ import {
   OrderRepository,
   type CreatedOrderRow,
   type NormalizedOrderItem,
+  type StockReservation,
 } from "../repositories/order-repository";
 import { ApplicationError } from "../utils/errors";
 import type { CreateOrderInput } from "../validators/order-schemas";
@@ -145,6 +146,7 @@ export class OrderService {
           name: product.name,
           unitPriceKopecks,
           totalKopecks: unitPriceKopecks * item.quantity,
+          productAttributes: product.product_attributes ?? {},
         };
       });
       const subtotalKopecks = normalizedItems.reduce(
@@ -157,12 +159,13 @@ export class OrderService {
           input.delivery.method,
         );
 
+      const stockReservations: StockReservation[] = [];
       for (const item of normalizedItems) {
-        await this.orderRepository.reserveStock(
+        stockReservations.push(...await this.orderRepository.reserveStock(
           database,
           item.productId,
           item.quantity,
-        );
+        ));
       }
 
       return this.orderRepository.create(database, {
@@ -173,6 +176,7 @@ export class OrderService {
         deliveryKopecks,
         totalKopecks: subtotalKopecks + deliveryKopecks,
         managerNotificationEmail: this.managerNotificationEmail,
+        stockReservations,
       });
     });
   }

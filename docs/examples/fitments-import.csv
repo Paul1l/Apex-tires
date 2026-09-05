@@ -1,2 +1,3 @@
-product_source_system,product_external_id,make,model,generation,year_from,year_to,modification,is_oem,verified,verified_at,notes
-csv,EXAMPLE-PRODUCT-001,ПРИМЕР,ПРИМЕР,,2020,2024,,false,false,,Строка-шаблон; удалить перед рабочим импортом
+make,model,generation,year_from,year_to,modification,engine,product_type,axle,fitment_type,tire_width,tire_profile,tire_diameter,wheel_diameter,wheel_width,bolt_count,pcd,dia,et_min,et_max,source,verified,verified_at,notes
+ПРИМЕР,Модель,Поколение,2020,2024,,,tire,all,factory,205,55,16,,,,,,,,import,false,,Строка-шаблон; не использовать как проверенную применяемость
+ПРИМЕР,Модель,Поколение,2020,2024,,,wheel,all,factory,,,,18,8,5,112,66.6,30,45,import,false,,Строка-шаблон; не использовать как проверенную применяемость

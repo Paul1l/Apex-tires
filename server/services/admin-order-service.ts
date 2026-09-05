@@ -18,6 +18,9 @@ export class AdminOrderService {
     input: UpdateOrderStatusInput,
   ): Promise<void> {
     await withTransaction(this.pool, async (database) => {
+      await database.query("SELECT id FROM orders WHERE id=$1 FOR UPDATE", [orderId]);
+      const expired = await database.query("SELECT 1 FROM inventory_reservations WHERE order_id=$1 AND (status='expired' OR (status='active' AND expires_at <= NOW())) LIMIT 1", [orderId]);
+      if (expired.rowCount && !["new","cancelled"].includes(input.status)) throw new ApplicationError({ code: "ORDER_RESERVATION_EXPIRED", message: "Резерв заказа истёк. Проверьте наличие и оформите новый заказ; старый можно отменить.", statusCode: 409 });
       const updated = await this.orderRepository.updateStatus(
         database,
         orderId,

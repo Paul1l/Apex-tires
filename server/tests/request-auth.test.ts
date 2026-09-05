@@ -9,6 +9,7 @@ test("session token is read only from the named cookie", () => {
     "secure token",
   );
   assert.equal(readSessionToken("theme=dark"), null);
+  assert.equal(readSessionToken("apex_session=%invalid"), null);
 });
 
 test("manager and admin roles can be checked explicitly", () => {

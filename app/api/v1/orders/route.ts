@@ -10,6 +10,7 @@ import { readJsonRequest } from "@/server/utils/http";
 import { createOrderSchema } from "@/server/validators/order-schemas";
 import { formatValidationIssues } from "@/server/validators/one-c-schemas";
 import { getAuthenticatedUser } from "@/server/security/request-auth";
+import { requireSameOrigin } from "@/server/security/request-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,6 +25,7 @@ function readRequesterIpAddress(request: Request): string | null {
 
 export async function POST(request: Request) {
   try {
+    requireSameOrigin(request);
     if (!databaseIsConfigured()) {
       throw new ApplicationError({
         code: "ORDER_STORAGE_NOT_CONFIGURED",

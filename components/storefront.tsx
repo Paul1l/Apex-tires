@@ -327,9 +327,13 @@ function ProductCard({
             <span className="rating"><Star size={13} fill="currentColor" /> {product.rating}</span>
           )}
         </div>
-        <button className="product-title" onClick={() => onQuickView(product)}>
-          <strong>{product.brand}</strong> {product.model}
-        </button>
+        {product.slug && !catalogIsPreview ? (
+          <Link className="product-title" href={`/${product.kind === "tire" ? "tires" : "wheels"}/${product.slug}`}>
+            <strong>{product.brand}</strong> {product.model}
+          </Link>
+        ) : (
+          <button className="product-title" onClick={() => onQuickView(product)}><strong>{product.brand}</strong> {product.model}</button>
+        )}
         <p className="product-size">{product.subtitle}</p>
         <div className="stock-line">
           <span className={availability.available ? "stock-dot" : "stock-dot empty"} />
@@ -650,7 +654,7 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => void; notify: (m: string) => void }) {
-  const { cart, products, setCartQuantity, clearCart, user } = useStore();
+  const { cart, products, setCartQuantity, clearCart, user, cartError } = useStore();
   const [ordered, setOrdered] = useState(false);
   const [orderNumber, setOrderNumber] = useState("");
   const lines = cart
@@ -675,6 +679,7 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
           </div>
           <button className="icon-button" onClick={onClose}><X /></button>
         </div>
+        {cartError && <p className="checkout-error" role="alert">{cartError}</p>}
         {ordered ? (
           <div className="success-state">
             <span><Check size={30} /></span>
@@ -932,7 +937,8 @@ function CollectionDrawer({ open, onClose, mode }: { open: boolean; onClose: () 
 }
 
 export function Storefront({ initialKind = "all" }: { initialKind?: "all" | ProductKind }) {
-  const { products, cart, favorites, compare, user } = useStore();
+  const { products, cart, favorites, compare, user, mergeCatalogProducts } = useStore();
+  const databaseCatalogEnabled = businessConfig.catalog.dataMode === "database";
   const [filters, setFilters] = useState<CatalogFilters>({
     ...initialFilters,
     kind: initialKind,
@@ -944,36 +950,127 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
   const [heroDiameter, setHeroDiameter] = useState("18");
   const [carBrand, setCarBrand] = useState("");
   const [carModel, setCarModel] = useState("");
-  const [carYear, setCarYear] = useState("2024");
+  const [carYear, setCarYear] = useState(databaseCatalogEnabled ? "" : "2024");
   const [carGeneration, setCarGeneration] = useState("");
+  const [carModification, setCarModification] = useState("");
+  const [vehicleModifications, setVehicleModifications] = useState<VehicleModel[]>([]);
+  const [modificationsLoading, setModificationsLoading] = useState(false);
   const [vehicleMakes, setVehicleMakes] = useState<VehicleMake[]>([]);
   const [vehicleModels, setVehicleModels] = useState<VehicleModel[]>([]);
   const [vehicleGenerations, setVehicleGenerations] = useState<VehicleModel[]>([]);
   const [vehicleMakesLoading, setVehicleMakesLoading] = useState(false);
   const [vehicleModelsLoading, setVehicleModelsLoading] = useState(false);
   const [vehicleGenerationsLoading, setVehicleGenerationsLoading] = useState(false);
-  const [fitmentProductIds, setFitmentProductIds] = useState<string[] | null>(null);
   const [fitmentLookupLoading, setFitmentLookupLoading] = useState(false);
   const [vehicleCatalogMessage, setVehicleCatalogMessage] = useState("");
   const [visible, setVisible] = useState(8);
   const [quickView, setQuickView] = useState<Product | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("cart") === "open") setCartOpen(true);
+  }, []);
   const [accountOpen, setAccountOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [collection, setCollection] = useState<"favorites" | "compare" | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [toast, setToast] = useState("");
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [serverCatalogProducts, setServerCatalogProducts] = useState<Product[]>([]);
+  const [serverCatalogTotal, setServerCatalogTotal] = useState(0);
+  const [serverCatalogTotalPages, setServerCatalogTotalPages] = useState(0);
+  const [serverCatalogMessage, setServerCatalogMessage] = useState("");
+  const [serverFacets, setServerFacets] = useState<{
+    brands: string[];
+    widths: number[];
+    profiles: number[];
+    diameters: number[];
+  }>({ brands: [], widths: [], profiles: [], diameters: [] });
 
-  const brands = useMemo(() => [...new Set(products.map((p) => p.brand))].sort(), [products]);
+  const brands = useMemo(
+    () => databaseCatalogEnabled ? serverFacets.brands : [...new Set(products.map((p) => p.brand))].sort(),
+    [databaseCatalogEnabled, products, serverFacets.brands],
+  );
   const dimensions = useMemo(
-    () => ({
+    () => databaseCatalogEnabled ? {
+      widths: serverFacets.widths,
+      profiles: serverFacets.profiles,
+      diameters: serverFacets.diameters,
+    } : ({
       widths: [...new Set(products.filter((p) => p.kind === "tire").map((p) => p.width))].sort((a, b) => a - b),
       profiles: [...new Set(products.filter((p) => p.kind === "tire").map((p) => p.profile))].sort((a, b) => a - b),
       diameters: [...new Set(products.map((p) => p.diameter))].sort((a, b) => a - b),
     }),
-    [products],
+    [databaseCatalogEnabled, products, serverFacets],
   );
+
+  const catalogFilterKey = JSON.stringify(filters);
+
+  useEffect(() => {
+    if (!databaseCatalogEnabled) return;
+    setCatalogPage(1);
+  }, [catalogFilterKey, databaseCatalogEnabled]);
+
+  useEffect(() => {
+    if (!databaseCatalogEnabled) return;
+    const abortController = new AbortController();
+    const timeout = window.setTimeout(() => {
+      const selectedFilters = JSON.parse(catalogFilterKey) as CatalogFilters;
+      const parameters = new URLSearchParams({
+        type: selectedFilters.kind,
+        sort: selectedFilters.sort === "price-asc" ? "price_asc" : selectedFilters.sort === "price-desc" ? "price_desc" : "newest",
+        page: String(catalogPage),
+        pageSize: "24",
+      });
+      if (selectedFilters.brands.length) parameters.set("brand", selectedFilters.brands.join(","));
+      if (selectedFilters.seasons.length) parameters.set("season", selectedFilters.seasons.join(","));
+      if (selectedFilters.width) parameters.set("width", selectedFilters.width);
+      if (selectedFilters.profile) parameters.set("profile", selectedFilters.profile);
+      if (selectedFilters.diameter) parameters.set("diameter", selectedFilters.diameter);
+      if (selectedFilters.minPrice > 0) parameters.set("minPrice", String(selectedFilters.minPrice));
+      if (selectedFilters.maxPrice < initialFilters.maxPrice) parameters.set("maxPrice", String(selectedFilters.maxPrice));
+      if (selectedFilters.inStock) parameters.set("inStock", "true");
+      if (selectedFilters.studded) parameters.set("studded", "true");
+      if (selectedFilters.runflat) parameters.set("runflat", "true");
+      if (selectedFilters.query.trim()) parameters.set("search", selectedFilters.query.trim());
+      if (selectedFilters.carMake && selectedFilters.carModel && selectedFilters.carGeneration) {
+        parameters.set("vehicleMake", selectedFilters.carMake);
+        parameters.set("vehicleModel", selectedFilters.carModel);
+        parameters.set("vehicleGeneration", selectedFilters.carGeneration);
+        if (selectedFilters.carModification) parameters.set("vehicleModification", selectedFilters.carModification);
+      }
+      setFitmentLookupLoading(Boolean(selectedFilters.carMake));
+      setServerCatalogMessage("");
+      void fetch(`/api/v1/products?${parameters.toString()}`, {
+        cache: "no-store",
+        signal: abortController.signal,
+      }).then(async (response) => {
+        const result = (await response.json()) as {
+          items?: Product[];
+          pagination?: { total: number; totalPages: number };
+          facets?: { brands: string[]; widths: number[]; profiles: number[]; diameters: number[] };
+          message?: string;
+        };
+        if (!response.ok) throw new Error(result.message || "Каталог временно недоступен.");
+        const items = result.items ?? [];
+        setServerCatalogProducts(items);
+        mergeCatalogProducts(items);
+        setServerCatalogTotal(result.pagination?.total ?? 0);
+        setServerCatalogTotalPages(result.pagination?.totalPages ?? 0);
+        if (result.facets) setServerFacets(result.facets);
+      }).catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setServerCatalogProducts([]);
+          setServerCatalogTotal(0);
+          setServerCatalogMessage(error instanceof Error ? error.message : "Каталог временно недоступен.");
+        }
+      }).finally(() => setFitmentLookupLoading(false));
+    }, 350);
+    return () => {
+      window.clearTimeout(timeout);
+      abortController.abort();
+    };
+  }, [catalogFilterKey, catalogPage, databaseCatalogEnabled, mergeCatalogProducts]);
 
   const vehicleYears = useMemo(() => {
     const latestModelYear = new Date().getUTCFullYear() + 1;
@@ -985,9 +1082,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
 
   const selectedVehicleFitmentCount = useMemo(() => {
     if (!filters.carMake || !filters.carModel) return 0;
-    if (businessConfig.catalog.dataMode === "database") {
-      return fitmentProductIds?.length ?? 0;
-    }
+    if (databaseCatalogEnabled) return serverCatalogTotal;
     const selectedVehicleName =
       `${filters.carMake} ${filters.carModel}`.trim().toLocaleLowerCase("ru");
     return products.filter((product) =>
@@ -996,9 +1091,10 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
           compatibleCar.trim().toLocaleLowerCase("ru") === selectedVehicleName,
       ),
     ).length;
-  }, [filters.carMake, filters.carModel, products, fitmentProductIds]);
+  }, [databaseCatalogEnabled, filters.carMake, filters.carModel, products, serverCatalogTotal]);
 
   const filteredProducts = useMemo(() => {
+    if (databaseCatalogEnabled) return serverCatalogProducts;
     const list = products.filter((product) => {
       if (filters.kind !== "all" && product.kind !== filters.kind) return false;
       if (filters.seasons.length && !filters.seasons.includes(product.season)) return false;
@@ -1010,11 +1106,6 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       if (filters.inStock && product.stock - product.reserved <= 0) return false;
       if (filters.studded && !product.studded) return false;
       if (filters.runflat && !product.runflat) return false;
-      if (
-        businessConfig.catalog.dataMode === "database" &&
-        fitmentProductIds !== null &&
-        !fitmentProductIds.includes(product.id)
-      ) return false;
       if (
         businessConfig.catalog.dataMode === "preview" &&
         selectedVehicleFitmentCount > 0 &&
@@ -1040,7 +1131,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       if (filters.sort === "rating") return (b.rating ?? 0) - (a.rating ?? 0);
       return Number(Boolean(b.featured)) - Number(Boolean(a.featured)) || (b.reviews ?? 0) - (a.reviews ?? 0);
     });
-  }, [filters, products, selectedVehicleFitmentCount, fitmentProductIds]);
+  }, [databaseCatalogEnabled, filters, products, selectedVehicleFitmentCount, serverCatalogProducts]);
 
   const selectedMakeIsKnown = vehicleMakes.some(
     (make) => make.name.toLocaleLowerCase("ru") === carBrand.toLocaleLowerCase("ru"),
@@ -1051,7 +1142,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       carModel.trim().toLocaleLowerCase("ru"),
   );
   const selectedGenerationIsKnown =
-    !carGeneration ||
+    (!databaseCatalogEnabled && !carGeneration) ||
     vehicleGenerations.some(
       (generation) =>
         generation.name.toLocaleLowerCase("ru") ===
@@ -1102,7 +1193,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       selectorTab !== "car" ||
       !selectedMakeIsKnown ||
       !carBrand ||
-      !carYear
+      (!databaseCatalogEnabled && !carYear)
     ) {
       return;
     }
@@ -1129,7 +1220,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       .finally(() => setVehicleModelsLoading(false));
 
     return () => abortController.abort();
-  }, [carBrand, carYear, selectedMakeIsKnown, selectorTab]);
+  }, [carBrand, carYear, selectedMakeIsKnown, selectorTab, databaseCatalogEnabled]);
 
   useEffect(() => {
     if (
@@ -1162,6 +1253,22 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     return () => abortController.abort();
   }, [carBrand, carModel, carYear, selectedMakeIsKnown, selectedModelIsKnown, selectorTab]);
 
+  useEffect(() => {
+    setCarModification("");
+    setVehicleModifications([]);
+    setModificationsLoading(false);
+    if (!databaseCatalogEnabled || !carGeneration || !selectedGenerationIsKnown) return;
+    const controller = new AbortController();
+    setModificationsLoading(true);
+    const parameters = new URLSearchParams({make:carBrand,model:carModel,generation:carGeneration});
+    void fetch(`/api/vehicles/modifications?${parameters}`, {signal:controller.signal,cache:"no-store"})
+      .then(async (response) => { if (!response.ok) throw new Error("Модификации временно недоступны."); return response.json() as Promise<{items:string[]}>; })
+      .then((result) => setVehicleModifications(result.items.map((name) => ({id:name,name}))))
+      .catch((error: unknown) => { if (!controller.signal.aborted) setVehicleCatalogMessage(error instanceof Error ? error.message : "Модификации недоступны."); })
+      .finally(() => {if (!controller.signal.aborted) setModificationsLoading(false);});
+    return () => controller.abort();
+  }, [databaseCatalogEnabled,carBrand,carModel,carGeneration,selectedGenerationIsKnown]);
+
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
@@ -1175,7 +1282,6 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     setCarBrand(nextBrand);
     setCarModel("");
     setCarGeneration("");
-    setFitmentProductIds(null);
     const exactMake = vehicleMakes.find(
       (make) =>
         make.name.toLocaleLowerCase("ru") ===
@@ -1190,7 +1296,6 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     setCarYear(nextYear);
     setCarModel("");
     setCarGeneration("");
-    setFitmentProductIds(null);
   }
 
   async function submitHeroSearch() {
@@ -1208,43 +1313,9 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       }));
       notify("Подбор по размеру применён");
     } else {
-      if (!selectedMakeIsKnown || !selectedModelIsKnown || !selectedGenerationIsKnown) {
+      if (!selectedMakeIsKnown || !selectedModelIsKnown || !selectedGenerationIsKnown || modificationsLoading || (vehicleModifications.length > 0 && !vehicleModifications.some((item) => item.name === carModification))) {
         notify("Сначала выберите марку и модель из справочника");
         return;
-      }
-      if (businessConfig.catalog.dataMode === "database") {
-        setFitmentLookupLoading(true);
-        try {
-          const searchParameters = new URLSearchParams({
-            make: carBrand,
-            model: carModel.trim(),
-            year: carYear,
-          });
-          if (carGeneration.trim()) {
-            searchParameters.set("generation", carGeneration.trim());
-          }
-          const response = await fetch(
-            `/api/v1/fitments/products?${searchParameters.toString()}`,
-            { cache: "no-store" },
-          );
-          const result = (await response.json()) as {
-            productIds?: string[];
-            message?: string;
-          };
-          if (!response.ok) throw new Error(result.message || "Подбор временно недоступен.");
-          setFitmentProductIds(result.productIds ?? []);
-          notify(
-            result.productIds?.length
-              ? `Найдено подходящих товаров: ${result.productIds.length}`
-              : "Для автомобиля пока нет проверенной применяемости",
-          );
-        } catch (error) {
-          setFitmentProductIds(null);
-          notify(error instanceof Error ? error.message : "Подбор временно недоступен.");
-          return;
-        } finally {
-          setFitmentLookupLoading(false);
-        }
       }
       setFilters((current) => ({
         ...current,
@@ -1253,6 +1324,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
         carModel: carModel.trim(),
         carYear,
         carGeneration: carGeneration.trim(),
+        carModification: carModification.trim(),
       }));
       const selectedVehicleName =
         `${carBrand} ${carModel}`.trim().toLocaleLowerCase("ru");
@@ -1270,6 +1342,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
             : "Автомобиль выбран — размеры будут доступны после загрузки применяемости",
         );
       }
+      if (databaseCatalogEnabled) notify(`Проверяем применяемость для ${carBrand} ${carModel}`);
     }
     setVisible(8);
     scrollToCatalog();
@@ -1312,9 +1385,9 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       {filters.kind !== "wheel" && (
         <div className="filter-group">
           <p>Сезон</p>
-          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("summer")} onChange={() => toggleMulti("seasons", "summer" as Season)} /><span>Летние</span><small>{products.filter((p) => p.season === "summer").length}</small></label>
-          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("winter")} onChange={() => toggleMulti("seasons", "winter" as Season)} /><span>Зимние</span><small>{products.filter((p) => p.season === "winter").length}</small></label>
-          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("all-season")} onChange={() => toggleMulti("seasons", "all-season" as Season)} /><span>Всесезонные</span><small>{products.filter((p) => p.season === "all-season").length}</small></label>
+          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("summer")} onChange={() => toggleMulti("seasons", "summer" as Season)} /><span>Летние</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "summer").length}</small>}</label>
+          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("winter")} onChange={() => toggleMulti("seasons", "winter" as Season)} /><span>Зимние</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "winter").length}</small>}</label>
+          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("all-season")} onChange={() => toggleMulti("seasons", "all-season" as Season)} /><span>Всесезонные</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "all-season").length}</small>}</label>
         </div>
       )}
       <div className="filter-group">
@@ -1337,20 +1410,20 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       <div className="filter-group brand-filter">
         <p>Бренд</p>
         {brands.map((brand) => (
-          <label className="check-row" key={brand}><input type="checkbox" checked={filters.brands.includes(brand)} onChange={() => toggleMulti("brands", brand)} /><span>{brand}</span><small>{products.filter((p) => p.brand === brand).length}</small></label>
+          <label className="check-row" key={brand}><input type="checkbox" checked={filters.brands.includes(brand)} onChange={() => toggleMulti("brands", brand)} /><span>{brand}</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.brand === brand).length}</small>}</label>
         ))}
       </div>
       <div className="filter-group">
-        <label className="switch-row"><span><strong>Только в наличии</strong><small>Можно забрать сегодня</small></span><input type="checkbox" checked={filters.inStock} onChange={(e) => setFilters((f) => ({ ...f, inStock: e.target.checked }))} /></label>
+        <label className="switch-row"><span><strong>Только в наличии</strong><small>Есть доступный остаток</small></span><input type="checkbox" checked={filters.inStock} onChange={(e) => setFilters((f) => ({ ...f, inStock: e.target.checked }))} /></label>
         {filters.kind !== "wheel" && (
           <>
             <label className="switch-row"><span><strong>Шипованные</strong><small>Для сложной зимы</small></span><input type="checkbox" checked={filters.studded} onChange={(e) => setFilters((f) => ({ ...f, studded: e.target.checked }))} /></label>
-            <label className="switch-row"><span><strong>RunFlat</strong><small>До 80 км без давления</small></span><input type="checkbox" checked={filters.runflat} onChange={(e) => setFilters((f) => ({ ...f, runflat: e.target.checked }))} /></label>
+            <label className="switch-row"><span><strong>RunFlat</strong><small>Проверьте требования производителя</small></span><input type="checkbox" checked={filters.runflat} onChange={(e) => setFilters((f) => ({ ...f, runflat: e.target.checked }))} /></label>
           </>
         )}
       </div>
       <button className="reset-button" onClick={() => setFilters(initialFilters)}>Сбросить все фильтры</button>
-      <button className="primary-button full filters-apply" onClick={() => setFiltersOpen(false)}>Показать {filteredProducts.length}</button>
+      <button className="primary-button full filters-apply" onClick={() => setFiltersOpen(false)}>Показать {databaseCatalogEnabled ? serverCatalogTotal : filteredProducts.length}</button>
     </div>
   );
 
@@ -1499,12 +1572,10 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                     onValueChange={(nextModel) => {
                       setCarModel(nextModel);
                       setCarGeneration("");
-                      setFitmentProductIds(null);
                     }}
                     onOptionSelect={(option) => {
                       setCarModel(option.name);
                       setCarGeneration("");
-                      setFitmentProductIds(null);
                     }}
                   />
                   <label>
@@ -1513,6 +1584,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                       value={carYear}
                       onChange={(event) => updateSelectedCarYear(event.target.value)}
                     >
+                      {databaseCatalogEnabled && <option value="">Не уточнять год</option>}
                       {vehicleYears.map((year) => (
                         <option key={year} value={year}>{year}</option>
                       ))}
@@ -1532,17 +1604,15 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                       helperText={
                         vehicleGenerations.length > 0
                           ? `Доступно вариантов: ${vehicleGenerations.length}`
-                          : "Для модели поколение не уточняется"
+                          : "Проверенных поколений пока нет"
                       }
                       loading={vehicleGenerationsLoading}
                       disabled={!selectedModelIsKnown || vehicleGenerationsLoading}
                       onValueChange={(value) => {
                         setCarGeneration(value);
-                        setFitmentProductIds(null);
                       }}
                       onOptionSelect={(option) => {
                         setCarGeneration(option.name);
-                        setFitmentProductIds(null);
                       }}
                     />
                   ) : (
@@ -1557,6 +1627,12 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                     </label>
                   )}
                 </div>
+                {databaseCatalogEnabled && (modificationsLoading || vehicleModifications.length > 0) && <SearchableVehicleSelect
+                  id="vehicle-modification" label="Модификация" value={carModification} options={vehicleModifications}
+                  helperText="Выберите вариант из проверенного справочника"
+                  placeholder="Выберите модификацию" loading={modificationsLoading} disabled={modificationsLoading}
+                  onValueChange={setCarModification} onOptionSelect={(option) => setCarModification(option.name)}
+                />}
                 <p className="selector-hint">
                   {vehicleCatalogMessage ||
                     "Марки и модели загружаются из автомобильного справочника."}
@@ -1638,7 +1714,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                 </strong>
                 {selectedVehicleFitmentCount === 0 && (
                   <small>
-                    Размеры будут отфильтрованы после загрузки применяемости из 1С.
+                    Для этого автомобиля пока нет проверенных данных о подходящих размерах.
                   </small>
                 )}
               </div>
@@ -1662,10 +1738,10 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
             <div className="catalog-main">
               <div className="catalog-toolbar">
                 <button className="mobile-filter-button" onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={18} /> Фильтры</button>
-                <span>Найдено <strong>{filteredProducts.length}</strong></span>
+                <span>Найдено <strong>{databaseCatalogEnabled ? serverCatalogTotal : filteredProducts.length}</strong></span>
                 <label>Сортировка
                   <select value={filters.sort} onChange={(e) => setFilters((f) => ({ ...f, sort: e.target.value as CatalogFilters["sort"] }))}>
-                    <option value="popular">Рекомендуемые</option>
+                    <option value="popular">Сначала новые</option>
                     <option value="price-asc">Сначала дешевле</option>
                     <option value="price-desc">Сначала дороже</option>
                     {businessConfig.catalog.ratingsEnabled && <option value="rating">По рейтингу</option>}
@@ -1675,19 +1751,26 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
               {filteredProducts.length > 0 ? (
                 <>
                   <div className="product-grid">
-                    {filteredProducts.slice(0, visible).map((product) => (
+                    {(databaseCatalogEnabled ? filteredProducts : filteredProducts.slice(0, visible)).map((product) => (
                       <ProductCard key={product.id} product={product} onQuickView={setQuickView} notify={notify} />
                     ))}
                   </div>
-                  {visible < filteredProducts.length && (
+                  {!databaseCatalogEnabled && visible < filteredProducts.length && (
                     <button className="load-more" onClick={() => setVisible((n) => n + 8)}>Показать ещё <Plus size={17} /></button>
+                  )}
+                  {databaseCatalogEnabled && serverCatalogTotalPages > 1 && (
+                    <div className="catalog-pagination">
+                      <button className="load-more" disabled={catalogPage <= 1} onClick={() => setCatalogPage((page) => Math.max(1, page - 1))}>Назад</button>
+                      <span>Страница {catalogPage} из {serverCatalogTotalPages}</span>
+                      <button className="load-more" disabled={catalogPage >= serverCatalogTotalPages} onClick={() => setCatalogPage((page) => page + 1)}>Далее</button>
+                    </div>
                   )}
                 </>
               ) : (
                 <div className="no-results">
                   <Search size={34} />
                   <h3>Ничего не нашли</h3>
-                  <p>Попробуйте изменить параметры или оставьте запрос эксперту.</p>
+                  <p>{serverCatalogMessage || "Попробуйте изменить параметры или оставьте запрос эксперту."}</p>
                   <button className="secondary-button" onClick={() => setFilters(initialFilters)}>Сбросить фильтры</button>
                 </div>
               )}

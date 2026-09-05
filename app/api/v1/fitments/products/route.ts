@@ -4,6 +4,7 @@ import {
   databaseIsConfigured,
 } from "@/server/bootstrap/application-services";
 import { applicationLogger } from "@/server/types/common";
+import { catalogQuerySchema } from "@/server/validators/catalog-query-schema";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +18,7 @@ export async function GET(request: NextRequest) {
   const year = rawYear ? Number(rawYear) : undefined;
   if (
     !make ||
-    !model ||
+    !model || !generation ||
     make.length > 120 ||
     model.length > 160 ||
     (generation && generation.length > 120) ||
@@ -36,15 +37,20 @@ export async function GET(request: NextRequest) {
     );
   }
   try {
-    const result =
-      await createApplicationServices().fitmentProvider.findCompatibleProducts({
-        make,
-        model,
-        generation,
-        modification,
-        year,
-      });
-    return NextResponse.json({ ok: true, ...result });
+    const validation = catalogQuerySchema.safeParse({
+      type: request.nextUrl.searchParams.get("type") || "all",
+      page: request.nextUrl.searchParams.get("page") || 1,
+      pageSize: request.nextUrl.searchParams.get("pageSize") || 24,
+      vehicleMake: make, vehicleModel: model, vehicleGeneration: generation,
+      vehicleModification: modification,
+    });
+    if (!validation.success) return NextResponse.json({ ok: false, message: "Проверьте параметры каталога." }, { status: 422 });
+    const services = createApplicationServices();
+    const [result, fitments] = await Promise.all([
+      services.catalogService.getCatalogPage(validation.data),
+      services.fitmentProvider.getFitments({ make, model, generation, modification, year }),
+    ]);
+    return NextResponse.json({ ok: true, ...result, fitments });
   } catch (error) {
     applicationLogger.error({ error }, "Vehicle fitment lookup failed");
     return NextResponse.json(

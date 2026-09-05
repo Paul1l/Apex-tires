@@ -19,6 +19,8 @@ interface StoreContextValue {
   compare: string[];
   user: UserProfile | null;
   hydrated: boolean;
+  cartError: string;
+  mergeCatalogProducts: (products: Product[]) => void;
   addToCart: (productId: string, quantity?: number) => void;
   setCartQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
@@ -51,8 +53,8 @@ function readBrowserStorage<T>(key: string, fallbackValue: T): T {
 /**
  * Provides interactive catalog, cart and authenticated user state.
  *
- * Catalog editing remains a browser prototype. Customer identity is established
- * by the server OTP API; only a display-safe profile is cached locally.
+ * Browser storage is a preview convenience. Production cart ownership and prices
+ * are established by server sessions and PostgreSQL.
  */
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
@@ -63,25 +65,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [compare, setCompare] = useState<string[]>([]);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [cartLoadedForUserId, setCartLoadedForUserId] = useState<string | null>(null);
+  const [cartLoadedForOwner, setCartLoadedForOwner] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [cartError, setCartError] = useState("");
 
   useEffect(() => {
     if (catalogIsPreview) {
       setProducts(
         readBrowserStorage(BROWSER_STORAGE_KEYS.products, seedProducts),
       );
-    } else {
-      setProducts([]);
-      void fetch("/api/v1/products", { cache: "no-store" })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Catalog request failed");
-          const result = (await response.json()) as { items?: Product[] };
-          setProducts(result.items ?? []);
-        })
-        .catch(() => setProducts([]));
-    }
-    setCart(readBrowserStorage(BROWSER_STORAGE_KEYS.cart, []));
+    } else setProducts([]);
+    setCart(catalogIsPreview ? readBrowserStorage(BROWSER_STORAGE_KEYS.cart, []) : []);
     setFavorites(
       readBrowserStorage(BROWSER_STORAGE_KEYS.favorites, []),
     );
@@ -116,7 +110,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         JSON.stringify(products),
       );
     }
-    localStorage.setItem(
+    if (catalogIsPreview) localStorage.setItem(
       BROWSER_STORAGE_KEYS.cart,
       JSON.stringify(cart),
     );
@@ -131,10 +125,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [products, cart, favorites, compare, hydrated, catalogIsPreview]);
 
   useEffect(() => {
-    if (!hydrated || !user || catalogIsPreview) {
-      setCartLoadedForUserId(null);
+    if (!hydrated || catalogIsPreview) {
+      setCartLoadedForOwner(null);
       return;
     }
+    const ownerKey = user?.id ?? "guest";
     const abortController = new AbortController();
     void fetch("/api/v1/account/cart", {
       credentials: "same-origin",
@@ -143,40 +138,44 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     })
       .then(async (response) => {
         if (!response.ok) throw new Error("Cart request failed");
-        return response.json() as Promise<{ items?: CartLine[] }>;
+        return response.json() as Promise<{ items?: CartLine[]; products?: Product[] }>;
       })
       .then((result) => {
-        setCart((localItems) => {
-          const quantityByProductId = new Map<string, number>();
-          for (const item of [...(result.items ?? []), ...localItems]) {
-            quantityByProductId.set(
-              item.productId,
-              Math.max(quantityByProductId.get(item.productId) ?? 0, item.quantity),
-            );
-          }
-          return Array.from(quantityByProductId, ([productId, quantity]) => ({
-            productId,
-            quantity,
-          }));
+        setProducts((current) => {
+          const byId = new Map(current.map((product) => [product.id, product]));
+          for (const product of result.products ?? []) byId.set(product.id, product);
+          return Array.from(byId.values());
         });
-        setCartLoadedForUserId(user.id);
+        setCart(result.items ?? []);
+        setCartError("");
+        setCartLoadedForOwner(ownerKey);
       })
-      .catch(() => setCartLoadedForUserId(null));
+      .catch(() => { if (!abortController.signal.aborted) { setCartLoadedForOwner(null); setCartError("Не удалось загрузить корзину. Обновите страницу."); } });
     return () => abortController.abort();
   }, [catalogIsPreview, hydrated, user]);
 
   useEffect(() => {
-    if (!user || cartLoadedForUserId !== user.id || catalogIsPreview) return;
+    const ownerKey = user?.id ?? "guest";
+    if (cartLoadedForOwner !== ownerKey || catalogIsPreview) return;
     const timeout = window.setTimeout(() => {
       void fetch("/api/v1/account/cart", {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items: cart }),
-      }).catch(() => undefined);
+      }).then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "Корзина не сохранена. Повторите попытку.");
+        setCartError("");
+        setProducts((current) => {
+          const byId = new Map(current.map((product) => [product.id,product]));
+          for (const product of (result.products ?? []) as Product[]) byId.set(product.id, product);
+          return Array.from(byId.values());
+        });
+      }).catch((error: unknown) => setCartError(error instanceof Error ? error.message : "Корзина не сохранена. Проверьте соединение."));
     }, 350);
     return () => window.clearTimeout(timeout);
-  }, [cart, cartLoadedForUserId, catalogIsPreview, user]);
+  }, [cart, cartLoadedForOwner, catalogIsPreview, user]);
 
   const addToCart = useCallback((productId: string, quantity = 1) => {
     setCart((current) => {
@@ -220,6 +219,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const mergeCatalogProducts = useCallback((nextProducts: Product[]) => {
+    setProducts((current) => {
+      const productsById = new Map(current.map((product) => [product.id, product]));
+      for (const product of nextProducts) productsById.set(product.id, product);
+      return Array.from(productsById.values());
+    });
+  }, []);
+
   const value = useMemo<StoreContextValue>(
     () => ({
       products,
@@ -228,6 +235,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       compare,
       user,
       hydrated,
+      cartError,
+      mergeCatalogProducts,
       addToCart,
       setCartQuantity,
       clearCart: () => setCart([]),
@@ -236,7 +245,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       authenticateUser: setUser,
       logout: () => {
         setUser(null);
-        setCartLoadedForUserId(null);
+        setCartLoadedForOwner(null);
         void fetch("/api/auth/session", {
           method: "DELETE",
           credentials: "same-origin",
@@ -250,10 +259,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       compare,
       user,
       hydrated,
+      cartError,
       addToCart,
       setCartQuantity,
       toggleFavorite,
       toggleCompare,
+      mergeCatalogProducts,
     ],
   );
 

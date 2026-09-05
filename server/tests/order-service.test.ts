@@ -52,6 +52,7 @@ test("order total is calculated from locked backend prices", async () => {
       quantity: number,
     ) {
       reservations.push({ productId, quantity });
+      return [];
     },
     async getDeliveryPriceKopecks() {
       return 0;

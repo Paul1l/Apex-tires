@@ -2,6 +2,10 @@ node_modules
 .next
 .open-next
 .git
+.wrangler
+outputs
+work
+*.log
 .env*
 !.env.example
 npm-debug.log*

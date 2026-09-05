@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCsv } from "../imports/csv-parser.js";
+import { parseCsv, parseCsvStream } from "../imports/csv-parser.js";
 import { ApplicationError } from "../utils/errors.js";
 
 test("CSV parser supports quoted commas, line breaks and escaped quotes", () => {
@@ -28,4 +28,30 @@ test("CSV parser enforces the batch row limit", () => {
     (error: unknown) =>
       error instanceof ApplicationError && error.code === "CSV_ROW_LIMIT_EXCEEDED",
   );
+});
+
+test("streaming CSV preserves escaped quotes and UTF-8 at every chunk boundary", async () => {
+  const source = 'sku,name,notes\r\nS-1,"Шина, зимняя","Строка 1\nСтрока ""2"""\r\nS-2,Диск,Конец';
+  const bytes = new TextEncoder().encode(source);
+  for (let chunkSize = 1; chunkSize <= bytes.length; chunkSize += 1) {
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.length) return controller.close();
+        controller.enqueue(bytes.slice(offset, offset + chunkSize));
+        offset += chunkSize;
+      },
+    });
+    const rows = [];
+    for await (const row of parseCsvStream(stream)) rows.push(row);
+    assert.deepEqual(rows.map((row) => row.values), parseCsv(source).map((row) => row.values));
+  }
+});
+
+test("streaming CSV rejects truncated quoted fields and row overflow", async () => {
+  for (const [source, code] of [['id\n"unfinished', 'INVALID_CSV'], ['id\n1\n2', 'CSV_ROW_LIMIT_EXCEEDED']]) {
+    await assert.rejects(async () => {
+      for await (const row of parseCsvStream(new Blob([source]).stream(), { maximumRows: 1 })) void row;
+    }, (error: unknown) => error instanceof ApplicationError && error.code === code);
+  }
 });

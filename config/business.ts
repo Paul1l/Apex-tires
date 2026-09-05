@@ -17,6 +17,7 @@ function enabled(value: string | undefined): boolean {
 }
 
 function coordinate(value: string | undefined): number | null {
+  if (!value?.trim()) return null;
   const parsedValue = Number(value);
   return Number.isFinite(parsedValue) ? parsedValue : null;
 }

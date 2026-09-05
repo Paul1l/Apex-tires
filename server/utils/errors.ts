@@ -1,3 +1,5 @@
+import { ZodError } from "zod";
+
 export class ApplicationError extends Error {
   readonly code: string;
   readonly statusCode: number;
@@ -31,6 +33,10 @@ export function toSafeError(error: unknown): {
     details?: unknown;
   };
 } {
+  if (error instanceof ZodError) return { statusCode: 422, body: {
+    ok: false, code: "VALIDATION_ERROR", message: "Проверьте введённые параметры.",
+    details: error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message })),
+  } };
   if (error instanceof ApplicationError) {
     return {
       statusCode: error.statusCode,

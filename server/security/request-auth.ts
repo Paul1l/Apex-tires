@@ -6,6 +6,7 @@ import {
 } from "../bootstrap/application-services";
 import type { UserRole } from "../repositories/auth-repository";
 import { ApplicationError } from "../utils/errors";
+import { requireSameOrigin } from "./request-origin";
 
 export function readSessionToken(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;
@@ -14,7 +15,11 @@ export function readSessionToken(cookieHeader: string | null): string | null {
     .map((part) => part.trim())
     .find((part) => part.startsWith(`${AUTHENTICATION_COOKIE_NAME}=`));
   if (!cookie) return null;
-  return decodeURIComponent(cookie.slice(AUTHENTICATION_COOKIE_NAME.length + 1));
+  try {
+    return decodeURIComponent(cookie.slice(AUTHENTICATION_COOKIE_NAME.length + 1));
+  } catch {
+    return null;
+  }
 }
 
 export async function getAuthenticatedUser(
@@ -30,6 +35,7 @@ export async function requireUserRole(
   request: Request,
   allowedRoles: readonly UserRole[],
 ): Promise<UserProfile> {
+  requireSameOrigin(request);
   const user = await getAuthenticatedUser(request);
   if (!user) {
     throw new ApplicationError({

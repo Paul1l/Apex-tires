@@ -23,8 +23,9 @@ export async function POST(request: Request) {
     const user = await requireUserRole(request, ["manager", "admin"]);
     const upload = await readCsvUpload(request);
     const report =
-      await createApplicationServices().catalogImportService.importFitmentsCsv(
-        upload.csv,
+      await createApplicationServices().catalogImportService.importFitmentsCsvStream(
+        upload.stream,
+        upload.filename,
         user.id,
       );
     return NextResponse.json({ ok: report.ok, report }, { status: report.ok ? 200 : 207 });

@@ -3,6 +3,7 @@ import type {
   CreateOrderInput,
 } from "../validators/order-schemas";
 import type { OrderStatusSyncItem } from "../validators/one-c-schemas";
+import { formatOrderNumber } from "../services/order-number-service";
 
 export interface CreatedOrderRow {
   id: string;
@@ -20,6 +21,7 @@ export interface CheckoutProductRow {
   is_active: boolean;
   amount_kopecks: number | string | null;
   available: number;
+  product_attributes?: JsonValue;
 }
 
 export interface NormalizedOrderItem {
@@ -29,6 +31,7 @@ export interface NormalizedOrderItem {
   name: string;
   unitPriceKopecks: number;
   totalKopecks: number;
+  productAttributes: JsonValue;
 }
 
 export interface PersistedOrderInput extends Omit<CreateOrderInput, "items"> {
@@ -40,7 +43,10 @@ export interface PersistedOrderInput extends Omit<CreateOrderInput, "items"> {
   userId?: string;
   requesterAddress?: string | null;
   userAgent?: string | null;
+  stockReservations?: StockReservation[];
 }
+
+export interface StockReservation { productId: string; warehouseId: string; quantity: number; }
 
 interface IntegrationOrderItemRow {
   order_id: string;
@@ -222,17 +228,22 @@ export class OrderRepository {
          products.sku,
          products.name,
          products.is_active,
+         jsonb_build_object('kind', products.kind, 'condition', products.condition,
+           'brand', products.brand, 'model', products.model,
+           'tire', (SELECT to_jsonb(t) - 'product_id' FROM tire_specs t WHERE t.product_id=products.id),
+           'wheel', (SELECT to_jsonb(w) - 'product_id' FROM wheel_specs w WHERE w.product_id=products.id)) AS product_attributes,
          prices.amount_kopecks,
          COALESCE((
            SELECT SUM(inventories.quantity - inventories.reserved)
            FROM inventories
-           WHERE inventories.product_id = products.id
+           JOIN warehouses ON warehouses.id=inventories.warehouse_id
+           WHERE inventories.product_id = products.id AND warehouses.is_active
          ), 0)::integer AS available
        FROM products
        LEFT JOIN prices
          ON prices.product_id = products.id AND prices.price_type = 'retail'
        WHERE products.id = ANY($1::uuid[])
-       FOR UPDATE OF products`,
+       ORDER BY products.id FOR UPDATE OF products`,
       [productIds],
     );
     return result.rows;
@@ -245,7 +256,7 @@ export class OrderRepository {
     const sequenceResult = await database.query<{ value: string | number }>(
       "SELECT nextval('order_number_sequence') AS value",
     );
-    const orderNumber = `AW-${String(sequenceResult.rows[0].value).padStart(6, "0")}`;
+    const orderNumber = formatOrderNumber(sequenceResult.rows[0].value);
     const orderResult = await database.query<CreatedOrderRow>(
       `INSERT INTO orders (
          number, user_id, checkout_idempotency_key, customer_name, customer_email,
@@ -271,6 +282,13 @@ export class OrderRepository {
       ],
     );
     const createdOrder = orderResult.rows[0];
+    const reservationHours = Number(process.env.ORDER_RESERVATION_TTL_HOURS || 24);
+    if (!Number.isFinite(reservationHours) || reservationHours < 1 || reservationHours > 168) throw new Error("Invalid ORDER_RESERVATION_TTL_HOURS");
+    for (const reservation of order.stockReservations ?? []) {
+      await database.query(`INSERT INTO inventory_reservations(order_id,product_id,warehouse_id,quantity,expires_at)
+        VALUES($1,$2,$3,$4,NOW()+make_interval(hours=>$5))`,
+      [createdOrder.id,reservation.productId,reservation.warehouseId,reservation.quantity,Math.floor(reservationHours)]);
+    }
 
     for (const documentSlug of ["offer", "personal-data-consent"]) {
       await database.query(
@@ -292,8 +310,8 @@ export class OrderRepository {
       await database.query(
         `INSERT INTO order_items (
            order_id, product_id, sku, product_name, quantity,
-           unit_price_kopecks, total_kopecks
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           unit_price_kopecks, total_kopecks, product_attributes
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
         [
           createdOrder.id,
           item.productId,
@@ -302,6 +320,7 @@ export class OrderRepository {
           item.quantity,
           item.unitPriceKopecks,
           item.totalKopecks,
+          JSON.stringify(item.productAttributes),
         ],
       );
     }
@@ -373,7 +392,8 @@ export class OrderRepository {
     database: DatabaseExecutor,
     productId: string,
     requestedQuantity: number,
-  ): Promise<void> {
+  ): Promise<StockReservation[]> {
+    const allocations: StockReservation[] = [];
     const inventoryResult = await database.query<{
       product_id: string;
       warehouse_id: string;
@@ -383,6 +403,7 @@ export class OrderRepository {
       `SELECT product_id, warehouse_id, quantity, reserved
        FROM inventories
        WHERE product_id = $1 AND quantity > reserved
+         AND warehouse_id IN (SELECT id FROM warehouses WHERE is_active)
        ORDER BY (quantity - reserved) DESC, warehouse_id
        FOR UPDATE`,
       [productId],
@@ -400,11 +421,13 @@ export class OrderRepository {
         [productId, inventory.warehouse_id, allocated],
       );
       remainingQuantity -= allocated;
+      allocations.push({ productId, warehouseId: inventory.warehouse_id, quantity: allocated });
     }
 
     if (remainingQuantity > 0) {
       throw new Error("INSUFFICIENT_STOCK");
     }
+    return allocations;
   }
 
   async getOrdersForIntegration(

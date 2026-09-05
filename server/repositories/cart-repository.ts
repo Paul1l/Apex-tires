@@ -26,6 +26,18 @@ export class CartRepository {
     }));
   }
 
+  async listForAnonymous(database: DatabaseExecutor, anonymousSessionHash: string): Promise<PersistedCartLine[]> {
+    const result = await database.query<{ product_id: string; quantity: number }>(
+      `SELECT shopping_cart_items.product_id, shopping_cart_items.quantity
+       FROM shopping_carts JOIN shopping_cart_items ON shopping_cart_items.cart_id=shopping_carts.id
+       JOIN products ON products.id=shopping_cart_items.product_id
+       WHERE shopping_carts.anonymous_session_hash=$1 AND products.is_active=TRUE
+       ORDER BY shopping_cart_items.created_at`,
+      [anonymousSessionHash],
+    );
+    return result.rows.map((row) => ({ productId: row.product_id, quantity: row.quantity }));
+  }
+
   async findActiveProductIds(
     database: DatabaseExecutor,
     productIds: string[],
@@ -51,13 +63,49 @@ export class CartRepository {
       [userId],
     );
     const cartId = cartResult.rows[0].id;
-    await database.query("DELETE FROM shopping_cart_items WHERE cart_id = $1", [cartId]);
-    for (const item of items) {
-      await database.query(
-        `INSERT INTO shopping_cart_items (cart_id, product_id, quantity)
-         VALUES ($1, $2, $3)`,
-        [cartId, item.productId, item.quantity],
-      );
+    await this.replaceItems(database, cartId, items);
+  }
+
+  async replaceForAnonymous(
+    database: DatabaseExecutor,
+    anonymousSessionHash: string,
+    items: PersistedCartLine[],
+  ): Promise<void> {
+    const cartResult = await database.query<{ id: string }>(
+      `INSERT INTO shopping_carts(anonymous_session_hash) VALUES($1)
+       ON CONFLICT(anonymous_session_hash) WHERE anonymous_session_hash IS NOT NULL
+       DO UPDATE SET updated_at=NOW() RETURNING id`,
+      [anonymousSessionHash],
+    );
+    await this.replaceItems(database, cartResult.rows[0].id, items);
+  }
+
+  async mergeAnonymousIntoUser(
+    database: DatabaseExecutor,
+    anonymousSessionHash: string,
+    userId: string,
+  ): Promise<void> {
+    // Both merge and guest writes lock the guest row first, preventing duplicate merges.
+    await database.query("SELECT id FROM shopping_carts WHERE anonymous_session_hash=$1 FOR UPDATE", [anonymousSessionHash]);
+    const anonymousItems = await this.listForAnonymous(database, anonymousSessionHash);
+    if (anonymousItems.length === 0) return;
+    const userItems = await this.listForUser(database, userId);
+    const quantities = new Map<string, number>();
+    for (const item of [...userItems, ...anonymousItems]) {
+      quantities.set(item.productId, Math.min(100, (quantities.get(item.productId) ?? 0) + item.quantity));
     }
+    await this.replaceForUser(database, userId, Array.from(quantities, ([productId, quantity]) => ({ productId, quantity })));
+    await database.query("DELETE FROM shopping_carts WHERE anonymous_session_hash=$1", [anonymousSessionHash]);
+  }
+
+  private async replaceItems(database: DatabaseExecutor, cartId: string, items: PersistedCartLine[]): Promise<void> {
+    await database.query("DELETE FROM shopping_cart_items WHERE cart_id = $1", [cartId]);
+    if (items.length === 0) return;
+    await database.query(
+      `INSERT INTO shopping_cart_items(cart_id,product_id,quantity)
+       SELECT $1, item.product_id, item.quantity
+       FROM jsonb_to_recordset($2::jsonb) AS item(product_id uuid, quantity integer)`,
+      [cartId, JSON.stringify(items.map((item) => ({ product_id: item.productId, quantity: item.quantity })))],
+    );
   }
 }

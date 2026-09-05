@@ -16,6 +16,7 @@ export const batchEnvelopeSchema = z.object({
 export const productSchema = z.object({
   externalId: externalIdSchema,
   sku: skuSchema,
+  article: z.string().trim().max(100).optional(),
   name: z.string().trim().min(1).max(300),
   brand: z.string().trim().min(1).max(120),
   model: z.string().trim().min(1).max(160),
@@ -30,7 +31,13 @@ export const productSchema = z.object({
   studded: z.boolean().default(false),
   runflat: z.boolean().default(false),
   xl: z.boolean().default(false),
+  loadIndex: z.string().trim().max(20).optional(),
+  speedIndex: z.string().trim().max(20).optional(),
+  modelYear: z.number().int().min(1900).max(2200).optional(),
   wheelType: z.enum(["alloy", "steel", "other"]).optional(),
+  wheelWidth: z.number().min(3).max(20).optional(),
+  boltCount: z.number().int().min(3).max(10).optional(),
+  pcdNumber: z.number().min(70).max(250).optional(),
   pcd: z.string().trim().max(30).optional(),
   offset: z.number().int().min(-100).max(200).optional(),
   centerBore: z.number().min(20).max(200).optional(),
@@ -50,6 +57,17 @@ export const productSchema = z.object({
     .default([]),
   isActive: z.boolean().default(true),
   sourceUpdatedAt: isoTimestampSchema.optional(),
+}).superRefine((product, context) => {
+  if (product.kind === "tire") {
+    if (product.width < 80) context.addIssue({ code: "custom", path: ["width"], message: "Ширина шины должна быть от 80 до 500 мм." });
+    if (product.profile < 20) context.addIssue({ code: "custom", path: ["profile"], message: "Профиль шины должен быть от 20 до 100." });
+    if (product.season === "none") context.addIssue({ code: "custom", path: ["season"], message: "Укажите сезон шины." });
+  } else {
+    for (const field of ["wheelWidth", "boltCount", "pcdNumber"] as const) {
+      if (product[field] === undefined) context.addIssue({ code: "custom", path: [field], message: "Обязательный параметр диска." });
+    }
+    if (product.centerBore !== undefined && product.centerBore < 40) context.addIssue({ code: "custom", path: ["centerBore"], message: "DIA должен быть не менее 40 мм." });
+  }
 });
 
 export const priceSchema = z.object({

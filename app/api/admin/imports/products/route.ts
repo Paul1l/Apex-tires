@@ -23,8 +23,9 @@ export async function POST(request: Request) {
     const user = await requireUserRole(request, ["manager", "admin"]);
     const upload = await readCsvUpload(request);
     const report =
-      await createApplicationServices().catalogImportService.importProductsCsv(
-        upload.csv,
+      await createApplicationServices().catalogImportService.importProductsCsvStream(
+        upload.stream,
+        upload.filename,
         upload.mode,
         user.id,
       );

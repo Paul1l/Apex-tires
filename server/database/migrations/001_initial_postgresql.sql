@@ -91,7 +91,7 @@ CREATE TABLE products (
   studded BOOLEAN NOT NULL DEFAULT FALSE,
   runflat BOOLEAN NOT NULL DEFAULT FALSE,
   pcd TEXT,
-  offset INTEGER,
+  "offset" INTEGER,
   center_bore NUMERIC(6,2),
   color TEXT,
   country TEXT,

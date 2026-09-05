@@ -33,8 +33,10 @@ import { businessConfig, getSellerDisplayName } from "@/config/business";
 import { validateBusinessConfig } from "@/config/business-validation";
 import type { Product, ProductKind, UserProfile } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
+import { ImportJobs } from "@/components/admin/import-jobs";
+import { FitmentRequests } from "@/components/admin/fitment-requests";
 
-type Section = "overview" | "products" | "orders" | "sync" | "settings";
+type Section = "overview" | "products" | "orders" | "sync" | "settings" | "fitment-requests";
 
 interface OneCGatewayHealth {
   ok: boolean;
@@ -67,7 +69,21 @@ function MiniArt({ product }: { product: Product }) {
 
 function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
   const { products } = useStore();
+  const [catalogTotal, setCatalogTotal] = useState<number | null>(
+    businessConfig.catalog.dataMode === "preview" ? products.length : null,
+  );
   const configurationIssues = validateBusinessConfig(businessConfig);
+
+  useEffect(() => {
+    if (businessConfig.catalog.dataMode !== "database") return;
+    const abortController = new AbortController();
+    void fetch("/api/admin/products?page=1&pageSize=24", {
+      credentials: "same-origin", cache: "no-store", signal: abortController.signal,
+    }).then((response) => response.ok ? response.json() : null)
+      .then((result: { pagination?: { total?: number } } | null) => setCatalogTotal(result?.pagination?.total ?? null))
+      .catch(() => setCatalogTotal(null));
+    return () => abortController.abort();
+  }, []);
 
   return (
     <>
@@ -76,7 +92,7 @@ function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
         <button className="admin-primary-button" onClick={() => onNavigate("products")}><Upload size={17} /> Импортировать каталог</button>
       </div>
       <div className="admin-kpi-grid">
-        <article><span className="admin-kpi-icon green"><Boxes /></span><div><p>Каталог</p><strong>{products.length}</strong><small>{businessConfig.catalog.dataMode === "database" ? "Источник: PostgreSQL" : "Демонстрационные позиции"}</small></div></article>
+        <article><span className="admin-kpi-icon green"><Boxes /></span><div><p>Каталог</p><strong>{catalogTotal ?? "—"}</strong><small>{businessConfig.catalog.dataMode === "database" ? "Источник: PostgreSQL" : "Демонстрационные позиции"}</small></div></article>
         <article><span className="admin-kpi-icon sand"><ShoppingCart /></span><div><p>Заказы</p><strong>—</strong><small>Появятся после подключения PostgreSQL</small></div></article>
         <article><span className="admin-kpi-icon blue"><Database /></span><div><p>Бизнес-данные</p><strong>{configurationIssues.length === 0 ? "Готово" : `${configurationIssues.length} полей`}</strong><small>{configurationIssues.length === 0 ? "Конфигурация заполнена" : "Требуют заполнения"}</small></div></article>
         <article><span className="admin-kpi-icon violet"><Activity /></span><div><p>Режим</p><strong>{businessConfig.deploymentStage === "production" ? "Production" : "Preview"}</strong><small>Без вымышленных показателей</small></div></article>
@@ -87,6 +103,7 @@ function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
 }
 
 interface CsvImportReport {
+  jobId?: string;
   received: number;
   created: number;
   updated: number;
@@ -111,10 +128,19 @@ function CsvImportForm({
     setMessage("");
     setReport(null);
     try {
+      const form = event.currentTarget;
+      const file = (form.elements.namedItem("file") as HTMLInputElement | null)?.files?.[0];
+      if (!file) throw new Error("Выберите CSV-файл.");
+      const mode = (form.elements.namedItem("mode") as HTMLSelectElement | null)?.value;
       const response = await fetch(`/api/admin/imports/${type}`, {
         method: "POST",
         credentials: "same-origin",
-        body: new FormData(event.currentTarget),
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "X-File-Name": encodeURIComponent(file.name),
+          "X-Import-Mode": mode === "full" ? "full" : "incremental",
+        },
+        body: file,
       });
       const result = (await response.json()) as {
         report?: CsvImportReport;
@@ -145,6 +171,7 @@ function CsvImportForm({
         <div className="import-report">
           <strong>Получено: {report.received}</strong>
           <span>Создано: {report.created}; обновлено: {report.updated}; ошибок: {report.failed}.</span>
+          {report.jobId && <small>Задание: {report.jobId}</small>}
           {report.errors.slice(0, 20).map((error) => <small key={`${error.line}-${error.message}`}>Строка {error.line}: {error.message}</small>)}
         </div>
       )}
@@ -153,43 +180,87 @@ function CsvImportForm({
 }
 
 function ProductsSection() {
-  const { products } = useStore();
+  const { user } = useStore();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"all" | ProductKind>("all");
-  const visible = products.filter((product) => {
-    if (kind !== "all" && product.kind !== kind) return false;
-    const haystack = `${product.brand} ${product.model} ${product.sku}`.toLowerCase();
-    return haystack.includes(query.toLowerCase());
-  });
+  const [products, setProducts] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [message, setMessage] = useState("");
+  const [activeFilter, setActiveFilter] = useState("true");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => setPage(1), [kind, query, activeFilter, sourceFilter]);
+  useEffect(() => setSelectedIds([]), [page, kind, query, activeFilter, sourceFilter, refreshKey]);
+  useEffect(() => {
+    const abortController = new AbortController();
+    const timeout = window.setTimeout(() => {
+      const parameters = new URLSearchParams({ type: kind, page: String(page), pageSize: "24", sort: "newest" });
+      if (query.trim()) parameters.set("search", query.trim());
+      parameters.set("active", activeFilter);
+      if (sourceFilter) parameters.set("sourceSystem", sourceFilter);
+      setMessage("Загружаем каталог…");
+      void fetch(`/api/admin/products?${parameters.toString()}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: abortController.signal,
+      }).then(async (response) => {
+        const result = (await response.json()) as {
+          items?: Product[];
+          pagination?: { total: number; totalPages: number };
+          message?: string;
+        };
+        if (!response.ok) throw new Error(result.message || "Каталог недоступен.");
+        setProducts(result.items ?? []);
+        setTotal(result.pagination?.total ?? 0);
+        setTotalPages(result.pagination?.totalPages ?? 0);
+        setMessage("");
+      }).catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setProducts([]);
+          setMessage(error instanceof Error ? error.message : "Каталог недоступен.");
+        }
+      });
+    }, 300);
+    return () => { window.clearTimeout(timeout); abortController.abort(); };
+  }, [kind, page, query, activeFilter, sourceFilter, refreshKey]);
+
+  async function updateSelected(action: "activate" | "deactivate") {
+    if (!window.confirm(`${action === "activate" ? "Активировать" : "Скрыть"} выбранные товары (${selectedIds.length})?`)) return;
+    try {
+      const response = await fetch("/api/admin/products/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productIds: selectedIds, action, confirmed: true }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Изменения не сохранены.");
+      setRefreshKey((current) => current + 1);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Изменения не сохранены."); }
+  }
 
   return (
     <>
       <div className="admin-page-intro">
-        <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{products.length} позиций · рабочий источник PostgreSQL</span></div>
+        <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{total} позиций · рабочий источник PostgreSQL</span></div>
       </div>
       <div className="admin-two-column">
         <CsvImportForm type="products" title="Импорт products.csv" />
         <CsvImportForm type="fitments" title="Импорт fitments.csv" />
       </div>
+      <ImportJobs />
       <article className="admin-card products-card">
         <div className="admin-products-toolbar">
           <label className="admin-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Название, бренд или артикул" /></label>
+          <select aria-label="Активность товара" value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}><option value="true">Активные</option><option value="false">Неактивные</option></select>
+          <select aria-label="Источник товара" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="">Все источники</option><option value="csv">CSV</option><option value="manual">Вручную</option><option value="1c">1С</option></select>
           <div className="admin-segmented"><button className={kind === "all" ? "active" : ""} onClick={() => setKind("all")}>Все</button><button className={kind === "tire" ? "active" : ""} onClick={() => setKind("tire")}>Шины</button><button className={kind === "wheel" ? "active" : ""} onClick={() => setKind("wheel")}>Диски</button></div>
-          <button className="admin-secondary-button" onClick={() => {
-            const blob = new Blob([JSON.stringify(products, null, 2)], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = "apex-products.json";
-            link.click();
-            URL.revokeObjectURL(url);
-          }}><Download size={16} /> Экспорт JSON</button>
         </div>
         <div className="admin-table-wrap">
           <table className="admin-table products-table">
-            <thead><tr><th>Товар</th><th>Тип / сезон</th><th>Цена</th><th>Доступно</th><th>Внешний ID</th><th>Обновлён</th></tr></thead>
-            <tbody>{visible.map((product) => (
+            <thead><tr><th>Выбор</th><th>Товар</th><th>Тип / сезон</th><th>Цена</th><th>Доступно</th><th>Внешний ID</th><th>Обновлён</th></tr></thead>
+            <tbody>{products.map((product) => (
               <tr key={product.id}>
+                <td><input type="checkbox" aria-label={`Выбрать ${product.sku}`} checked={selectedIds.includes(product.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /></td>
                 <td><div className="admin-product-cell"><MiniArt product={product} /><p><strong>{product.brand} {product.model}</strong><span>{product.subtitle}</span><small>{product.sku}</small></p></div></td>
                 <td>{product.kind === "tire" ? <><strong>Шина</strong><small>{seasonLabels[product.season]}</small></> : <><strong>Диск</strong><small>{product.color}</small></>}</td>
                 <td><strong>{formatPrice(product.price)}</strong>{product.oldPrice && <small><s>{formatPrice(product.oldPrice)}</s></small>}</td>
@@ -200,8 +271,10 @@ function ProductsSection() {
             ))}</tbody>
           </table>
         </div>
-        {visible.length === 0 && <div className="admin-empty"><Search /><strong>Товары не найдены</strong><span>Измените запрос или фильтр.</span></div>}
-        <div className="admin-table-footer"><span>Показано {visible.length} из {products.length}. Один файл может содержать до 5 000 строк.</span></div>
+        {products.length === 0 && <div className="admin-empty"><Search /><strong>{message || "Товары не найдены"}</strong><span>Измените запрос или фильтр.</span></div>}
+        {products.length > 0 && message && <p role="alert">{message}</p>}
+        {user?.role === "admin" && selectedIds.length > 0 && <div><span>Выбрано: {selectedIds.length} </span><button onClick={() => void updateSelected("activate")}>Активировать</button><button onClick={() => void updateSelected("deactivate")}>Скрыть</button></div>}
+        <div className="admin-table-footer"><span>Показано {products.length} из {total}. Импорт обрабатывается пакетами по 1000 строк.</span><div><button disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Назад</button><span>{page} / {Math.max(totalPages, 1)}</span><button disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>Далее</button></div></div>
       </article>
     </>
   );
@@ -402,6 +475,7 @@ export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile
       { id: "overview" as Section, label: "Обзор", icon: LayoutDashboard },
       { id: "products" as Section, label: "Товары", icon: Package },
       { id: "orders" as Section, label: "Заказы", icon: ShoppingCart },
+      { id: "fitment-requests" as Section, label: "Заявки на подбор", icon: Search },
       { id: "sync" as Section, label: "Обмен с 1С", icon: RefreshCw },
       { id: "settings" as Section, label: "Настройки", icon: Settings },
     ],
@@ -437,6 +511,7 @@ export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile
           {section === "overview" && <Overview onNavigate={navigate} />}
           {section === "products" && <ProductsSection />}
           {section === "orders" && <OrdersSection />}
+          {section === "fitment-requests" && <FitmentRequests />}
           {section === "sync" && <SyncSection />}
           {section === "settings" && <SettingsSection />}
         </div>

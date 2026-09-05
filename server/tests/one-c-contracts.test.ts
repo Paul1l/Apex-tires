@@ -30,12 +30,13 @@ test("product batch accepts stable external identifiers", () => {
         width: 205,
         profile: 55,
         diameter: 16,
+        season: "summer",
       },
     ],
   });
 
   assert.equal(envelope.items.length, 1);
-  assert.equal(productSchema.parse(envelope.items[0]).season, "none");
+  assert.equal(productSchema.parse(envelope.items[0]).season, "summer");
 });
 
 test("prices and stocks reject negative values", () => {

@@ -6,6 +6,8 @@
     "dev": "next dev",
     "db:migrate": "tsx server/database/run-migrations.ts",
     "test": "tsx --test \"server/tests/*.test.ts\"",
+    "perf:catalog": "tsx server/performance/check-catalog.ts",
+    "import:csv": "tsx server/imports/run-csv-import.ts",
     "build": "next build --webpack",
     "build:worker": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",

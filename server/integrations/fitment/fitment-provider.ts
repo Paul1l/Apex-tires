@@ -6,17 +6,12 @@ export interface VehicleSelection {
   modification?: string;
 }
 
-export interface VerifiedFitmentResult {
-  productIds: string[];
-  source: "manual" | "import" | "external_api";
-  verified: boolean;
-  verifiedAt: string | null;
-}
-
 export interface FitmentProvider {
-  findCompatibleProducts(
-    vehicle: VehicleSelection,
-  ): Promise<VerifiedFitmentResult>;
+  listMakes(): Promise<string[]>;
+  listModels(make: string, year?: number): Promise<string[]>;
+  listGenerations(vehicle: Pick<VehicleSelection, "make" | "model" | "year">): Promise<string[]>;
+  listModifications(vehicle: Pick<VehicleSelection, "make" | "model" | "generation">): Promise<string[]>;
+  getFitments(vehicle: VehicleSelection): Promise<unknown[]>;
 }
 
 // AI may parse a query, but it must never implement this verification contract.
