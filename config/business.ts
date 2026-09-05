@@ -21,6 +21,12 @@ function coordinate(value: string | undefined): number | null {
   return Number.isFinite(parsedValue) ? parsedValue : null;
 }
 
+function optionalPositiveNumber(value: string | undefined): number | null {
+  if (!value?.trim()) return null;
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
+}
+
 const configuredAvailabilityMode =
   process.env.NEXT_PUBLIC_AVAILABILITY_DISPLAY_MODE;
 const availabilityModes: AvailabilityDisplayMode[] = [
@@ -32,6 +38,8 @@ const availabilityModes: AvailabilityDisplayMode[] = [
 ];
 
 export const BUSINESS_DATA_PLACEHOLDER = "[ТРЕБУЕТСЯ ЗАПОЛНИТЬ]";
+export const CONFIRMED_TWO_GIS_URL =
+  "https://2gis.ru/barnaul/firm/70000001036958402/tab/reviews?m=83.75635%2C53.376061%2F16";
 
 export const businessConfig = {
   deploymentStage: (
@@ -76,7 +84,9 @@ export const businessConfig = {
     address: optionalValue(process.env.NEXT_PUBLIC_STORE_ADDRESS),
     latitude: coordinate(process.env.NEXT_PUBLIC_STORE_LATITUDE),
     longitude: coordinate(process.env.NEXT_PUBLIC_STORE_LONGITUDE),
-    twoGisUrl: optionalValue(process.env.NEXT_PUBLIC_TWO_GIS_URL),
+    twoGisUrl:
+      optionalValue(process.env.NEXT_PUBLIC_TWO_GIS_URL) ??
+      CONFIRMED_TWO_GIS_URL,
   },
   workingHours: optionalValue(process.env.NEXT_PUBLIC_WORKING_HOURS),
   delivery: {
@@ -107,7 +117,9 @@ export const businessConfig = {
     vk: optionalValue(process.env.NEXT_PUBLIC_VK_URL),
     telegram: optionalValue(process.env.NEXT_PUBLIC_TELEGRAM_URL),
     whatsapp: optionalValue(process.env.NEXT_PUBLIC_WHATSAPP_URL),
-    twoGis: optionalValue(process.env.NEXT_PUBLIC_TWO_GIS_URL),
+    twoGis:
+      optionalValue(process.env.NEXT_PUBLIC_TWO_GIS_URL) ??
+      CONFIRMED_TWO_GIS_URL,
   },
   catalog: {
     dataMode:
@@ -127,6 +139,20 @@ export const businessConfig = {
   features: {
     installmentEnabled: enabled(
       process.env.NEXT_PUBLIC_INSTALLMENT_ENABLED,
+    ),
+  },
+  marketing: {
+    yearsExperience: optionalPositiveNumber(
+      process.env.NEXT_PUBLIC_CONFIRMED_YEARS_EXPERIENCE,
+    ),
+    rating: optionalPositiveNumber(
+      process.env.NEXT_PUBLIC_CONFIRMED_RATING,
+    ),
+    clientCount: optionalPositiveNumber(
+      process.env.NEXT_PUBLIC_CONFIRMED_CLIENT_COUNT,
+    ),
+    returnDays: optionalPositiveNumber(
+      process.env.NEXT_PUBLIC_CONFIRMED_RETURN_DAYS,
     ),
   },
   branding: {

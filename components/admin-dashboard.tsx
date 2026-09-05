@@ -4,9 +4,7 @@ import Link from "next/link";
 import {
   Activity,
   ArrowLeft,
-  ArrowRight,
   Boxes,
-  Check,
   ChevronRight,
   CloudCog,
   Database,
@@ -17,13 +15,10 @@ import {
   LogOut,
   Menu,
   Package,
-  Pencil,
-  Plus,
   RefreshCw,
   Search,
   Settings,
   ShoppingCart,
-  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -31,14 +26,12 @@ import {
   FormEvent,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { businessConfig, getSellerDisplayName } from "@/config/business";
 import { validateBusinessConfig } from "@/config/business-validation";
-import { INITIAL_CATALOG_CAPACITY } from "@/lib/store-config";
-import type { Product, ProductKind, Season } from "@/lib/types";
+import type { Product, ProductKind, UserProfile } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 
 type Section = "overview" | "products" | "orders" | "sync" | "settings";
@@ -64,193 +57,12 @@ interface OneCGatewayHealth {
   orders: Record<"pending" | "processing" | "synced" | "failed", number>;
 }
 
-const blankProduct: Product = {
-  id: "",
-  sku: "",
-  kind: "tire",
-  condition: "new",
-  brand: "",
-  model: "",
-  subtitle: "",
-  width: 225,
-  profile: 45,
-  diameter: 18,
-  season: "summer",
-  studded: false,
-  runflat: false,
-  price: 0,
-  priceUpdatedAt: new Date().toISOString(),
-  stock: 0,
-  reserved: 0,
-  warehouse: "",
-  tags: [],
-  country: "",
-  compatibleCars: [],
-  updatedAt: new Date().toISOString(),
-};
-
 function MiniArt({ product }: { product: Product }) {
   if (product.image) {
     // eslint-disable-next-line @next/next/no-img-element
     return <span className="admin-product-thumb image"><img src={product.image} alt="" /></span>;
   }
   return <span className={`admin-product-thumb ${product.kind}`}><i /><b /></span>;
-}
-
-function AdminLogin() {
-  const { login } = useStore();
-  const [message, setMessage] = useState("");
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const result = await login(String(form.get("email")), String(form.get("password")));
-    setMessage(result.message);
-  }
-
-  return (
-    <main className="admin-login-page">
-      <Link href="/" className="admin-back"><ArrowLeft size={17} /> Вернуться в магазин</Link>
-      <section className="admin-login-card">
-        <div className="admin-login-brand"><span className="admin-brand-mark"><i /><i /><i /></span><strong>{businessConfig.brandName}</strong><small>CONTROL</small></div>
-        <p className="eyebrow">Закрытая зона</p>
-        <h1>Управление магазином</h1>
-        <p>Каталог, заказы, остатки и синхронизация с 1С в одном интерфейсе.</p>
-        <form onSubmit={submit}>
-          <label><span>Электронная почта</span><input type="email" name="email" autoComplete="username" required /></label>
-          <label><span>Пароль</span><input type="password" name="password" autoComplete="current-password" required /></label>
-          {message && <small className="admin-login-message">{message}</small>}
-          <button className="admin-primary-button">Войти <ArrowRight size={17} /></button>
-        </form>
-        <small className="admin-security-note">Демо-доступ отключен. В production доступ будет защищен серверной сессией, ролями и журналом действий.</small>
-      </section>
-    </main>
-  );
-}
-
-function ProductEditor({
-  product,
-  onClose,
-}: {
-  product: Product;
-  onClose: () => void;
-}) {
-  const { saveProduct } = useStore();
-  const [draft, setDraft] = useState<Product>(product);
-  const [saved, setSaved] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  function update<K extends keyof Product>(key: K, value: Product[K]) {
-    setDraft((current) => ({ ...current, [key]: value }));
-  }
-
-  function readImage(file?: File) {
-    if (!file) return;
-    if (file.size > 2_500_000) {
-      window.alert("Для предпросмотра используйте изображение до 2,5 МБ.");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => update("image", String(reader.result));
-    reader.readAsDataURL(file);
-  }
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const normalized: Product = {
-      ...draft,
-      id: draft.id || `${draft.kind}-${draft.brand}-${draft.model}-${crypto.randomUUID().slice(0, 6)}`.toLowerCase().replace(/[^a-zа-я0-9]+/gi, "-"),
-      sku: draft.sku || `AW-${Date.now().toString().slice(-8)}`,
-      externalId: draft.externalId || `LOCAL-${Date.now()}`,
-      subtitle:
-        draft.subtitle ||
-        (draft.kind === "tire"
-          ? `${draft.width}/${draft.profile} R${draft.diameter}`
-          : `R${draft.diameter} ${draft.pcd || ""}`.trim()),
-      updatedAt: new Date().toISOString(),
-      priceUpdatedAt:
-        draft.price === product.price
-          ? draft.priceUpdatedAt
-          : new Date().toISOString(),
-    };
-    saveProduct(normalized);
-    setDraft(normalized);
-    setSaved(true);
-    window.setTimeout(onClose, 650);
-  }
-
-  return (
-    <div className="admin-modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <form className="admin-product-editor" onSubmit={submit}>
-        <div className="admin-editor-head">
-          <div><p className="eyebrow">{product.id ? "Редактирование" : "Новый товар"}</p><h2>{product.id ? `${product.brand} ${product.model}` : "Добавить в каталог"}</h2></div>
-          <button type="button" onClick={onClose}><X /></button>
-        </div>
-        <div className="admin-editor-body">
-          <div className="admin-image-uploader" onClick={() => fileRef.current?.click()}>
-            {draft.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={draft.image} alt="Превью товара" />
-            ) : (
-              <div><Upload /><strong>Добавить фото</strong><span>PNG, JPG или WebP · до 2,5 МБ</span></div>
-            )}
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => readImage(e.target.files?.[0])} hidden />
-          </div>
-          {draft.image && <button type="button" className="remove-image" onClick={() => update("image", undefined)}>Удалить изображение</button>}
-          <div className="admin-form-grid">
-            <label><span>Тип товара</span><select value={draft.kind} onChange={(e) => update("kind", e.target.value as ProductKind)}><option value="tire">Шина</option><option value="wheel">Диск</option></select></label>
-            {businessConfig.catalog.usedProductsEnabled && <label><span>Состояние</span><select value={draft.condition} onChange={(e) => update("condition", e.target.value as Product["condition"])}><option value="new">Новый</option><option value="used">Б/у комплект</option></select></label>}
-            <label><span>Артикул</span><input value={draft.sku} onChange={(e) => update("sku", e.target.value)} placeholder="Будет создан автоматически" /></label>
-            <label><span>ID в 1С</span><input value={draft.externalId || ""} onChange={(e) => update("externalId", e.target.value)} placeholder="1C-000001" /></label>
-            <label><span>Бренд *</span><input value={draft.brand} onChange={(e) => update("brand", e.target.value)} required /></label>
-            <label><span>Модель *</span><input value={draft.model} onChange={(e) => update("model", e.target.value)} required /></label>
-            <label className="wide"><span>Маркировка / подзаголовок</span><input value={draft.subtitle} onChange={(e) => update("subtitle", e.target.value)} placeholder="225/45 R18 95Y XL" /></label>
-            {draft.kind === "tire" ? (
-              <>
-                <label><span>Ширина</span><input type="number" value={draft.width} onChange={(e) => update("width", Number(e.target.value))} /></label>
-                <label><span>Профиль</span><input type="number" value={draft.profile} onChange={(e) => update("profile", Number(e.target.value))} /></label>
-                <label><span>Диаметр</span><input type="number" value={draft.diameter} onChange={(e) => update("diameter", Number(e.target.value))} /></label>
-                <label><span>Сезон</span><select value={draft.season} onChange={(e) => update("season", e.target.value as Season)}><option value="summer">Летние</option><option value="winter">Зимние</option><option value="all-season">Всесезонные</option></select></label>
-              </>
-            ) : (
-              <>
-                <label><span>Диаметр</span><input type="number" value={draft.diameter} onChange={(e) => update("diameter", Number(e.target.value))} /></label>
-                <label><span>Разболтовка</span><input value={draft.pcd || ""} onChange={(e) => update("pcd", e.target.value)} placeholder="5×112" /></label>
-                <label><span>Вылет ET</span><input type="number" value={draft.offset || 0} onChange={(e) => update("offset", Number(e.target.value))} /></label>
-                <label><span>Цвет</span><input value={draft.color || ""} onChange={(e) => update("color", e.target.value)} /></label>
-                <label><span>Тип диска</span><select value={draft.wheelType || "alloy"} onChange={(e) => update("wheelType", e.target.value as Product["wheelType"])}><option value="alloy">Литой</option><option value="steel">Штампованный</option><option value="other">Другой подтвержденный тип</option></select></label>
-              </>
-            )}
-            <label><span>Цена, ₽ *</span><input type="number" min="0" value={draft.price} onChange={(e) => update("price", Number(e.target.value))} required /></label>
-            <label><span>Старая цена, ₽</span><input type="number" min="0" value={draft.oldPrice || ""} onChange={(e) => update("oldPrice", e.target.value ? Number(e.target.value) : undefined)} /></label>
-            <label><span>Остаток</span><input type="number" min="0" value={draft.stock} onChange={(e) => update("stock", Number(e.target.value))} /></label>
-            <label><span>Резерв</span><input type="number" min="0" value={draft.reserved} onChange={(e) => update("reserved", Number(e.target.value))} /></label>
-            <label><span>Склад</span><input value={draft.warehouse} onChange={(e) => update("warehouse", e.target.value)} placeholder="Название из 1С или БД" /></label>
-            <label><span>Страна</span><input value={draft.country} onChange={(e) => update("country", e.target.value)} /></label>
-            <label className="wide"><span>Совместимые модели — через запятую</span><input value={draft.compatibleCars.join(", ")} onChange={(e) => update("compatibleCars", e.target.value.split(",").map((value) => value.trim()).filter(Boolean))} placeholder="BMW 3 Series, Audi A4" /></label>
-          </div>
-          <div className="admin-toggle-row">
-            <label><input type="checkbox" checked={draft.featured || false} onChange={(e) => update("featured", e.target.checked)} /> Рекомендуемый товар</label>
-            {draft.kind === "tire" && <label><input type="checkbox" checked={draft.studded} onChange={(e) => update("studded", e.target.checked)} /> Шипованный</label>}
-            {draft.kind === "tire" && <label><input type="checkbox" checked={draft.runflat} onChange={(e) => update("runflat", e.target.checked)} /> RunFlat</label>}
-            {draft.kind === "tire" && <label><input type="checkbox" checked={draft.xl || false} onChange={(e) => update("xl", e.target.checked)} /> XL</label>}
-          </div>
-          {businessConfig.catalog.usedProductsEnabled && draft.condition === "used" && (
-            <div className="admin-form-grid">
-              <label><span>Год производства</span><input type="number" min="1900" max="2200" value={draft.manufactureYear || ""} onChange={(e) => update("manufactureYear", e.target.value ? Number(e.target.value) : undefined)} /></label>
-              <label><span>Остаток протектора, мм</span><input type="number" min="0" step="0.1" value={draft.treadDepth || ""} onChange={(e) => update("treadDepth", e.target.value ? Number(e.target.value) : undefined)} /></label>
-              <label><span>Количество в комплекте</span><input type="number" min="1" value={draft.setQuantity || ""} onChange={(e) => update("setQuantity", e.target.value ? Number(e.target.value) : undefined)} /></label>
-              <label className="wide"><span>Ремонты и дефекты</span><input value={draft.defects || ""} onChange={(e) => update("defects", e.target.value)} placeholder="Указать фактическое состояние" /></label>
-            </div>
-          )}
-        </div>
-        <div className="admin-editor-footer">
-          <button type="button" className="admin-secondary-button" onClick={onClose}>Отмена</button>
-          <button className="admin-primary-button">{saved ? <><Check size={17} /> Сохранено</> : "Сохранить товар"}</button>
-        </div>
-      </form>
-    </div>
-  );
 }
 
 function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
@@ -261,7 +73,7 @@ function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
     <>
       <div className="admin-page-intro">
         <div><p className="eyebrow">Production readiness</p><h1>Состояние магазина</h1><span>Только фактические данные и статусы подключений.</span></div>
-        <button className="admin-primary-button" onClick={() => onNavigate("products")}><Plus size={17} /> Добавить товар</button>
+        <button className="admin-primary-button" onClick={() => onNavigate("products")}><Upload size={17} /> Импортировать каталог</button>
       </div>
       <div className="admin-kpi-grid">
         <article><span className="admin-kpi-icon green"><Boxes /></span><div><p>Каталог</p><strong>{products.length}</strong><small>{businessConfig.catalog.dataMode === "database" ? "Источник: PostgreSQL" : "Демонстрационные позиции"}</small></div></article>
@@ -274,14 +86,76 @@ function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
   );
 }
 
-function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
-  const { products, deleteProduct, resetProducts } = useStore();
+interface CsvImportReport {
+  received: number;
+  created: number;
+  updated: number;
+  failed: number;
+  errors: Array<{ line: number; message: string }>;
+}
+
+function CsvImportForm({
+  type,
+  title,
+}: {
+  type: "products" | "fitments";
+  title: string;
+}) {
+  const [report, setReport] = useState<CsvImportReport | null>(null);
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setMessage("");
+    setReport(null);
+    try {
+      const response = await fetch(`/api/admin/imports/${type}`, {
+        method: "POST",
+        credentials: "same-origin",
+        body: new FormData(event.currentTarget),
+      });
+      const result = (await response.json()) as {
+        report?: CsvImportReport;
+        message?: string;
+      };
+      if (!response.ok && response.status !== 207) {
+        throw new Error(result.message || "Импорт не выполнен.");
+      }
+      if (!result.report) throw new Error("Сервер не вернул отчет об импорте.");
+      setReport(result.report);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Импорт не выполнен.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="admin-card csv-import-card" onSubmit={submit}>
+      <div className="admin-card-head"><div><p className="eyebrow">CSV</p><h2>{title}</h2></div><Upload /></div>
+      <input type="file" name="file" accept=".csv,text/csv" required />
+      {type === "products" && (
+        <label><span>Режим</span><select name="mode" defaultValue="incremental"><option value="incremental">Добавить и обновить</option><option value="full">Полная синхронизация CSV</option></select></label>
+      )}
+      <button className="admin-primary-button" disabled={submitting}>{submitting ? "Проверяем и сохраняем…" : "Запустить импорт"}</button>
+      {message && <p className="admin-login-message" role="alert">{message}</p>}
+      {report && (
+        <div className="import-report">
+          <strong>Получено: {report.received}</strong>
+          <span>Создано: {report.created}; обновлено: {report.updated}; ошибок: {report.failed}.</span>
+          {report.errors.slice(0, 20).map((error) => <small key={`${error.line}-${error.message}`}>Строка {error.line}: {error.message}</small>)}
+        </div>
+      )}
+    </form>
+  );
+}
+
+function ProductsSection() {
+  const { products } = useStore();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"all" | ProductKind>("all");
-  const availablePreparedPositions = Math.max(
-    INITIAL_CATALOG_CAPACITY - products.length,
-    0,
-  );
   const visible = products.filter((product) => {
     if (kind !== "all" && product.kind !== kind) return false;
     const haystack = `${product.brand} ${product.model} ${product.sku}`.toLowerCase();
@@ -291,8 +165,11 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
   return (
     <>
       <div className="admin-page-intro">
-        <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{products.length} из {INITIAL_CATALOG_CAPACITY} подготовленных позиций · изменения сохраняются сразу</span></div>
-        <button className="admin-primary-button" onClick={() => onEdit({ ...blankProduct })}><Plus size={17} /> Добавить товар</button>
+        <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{products.length} позиций · рабочий источник PostgreSQL</span></div>
+      </div>
+      <div className="admin-two-column">
+        <CsvImportForm type="products" title="Импорт products.csv" />
+        <CsvImportForm type="fitments" title="Импорт fitments.csv" />
       </div>
       <article className="admin-card products-card">
         <div className="admin-products-toolbar">
@@ -310,7 +187,7 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
         </div>
         <div className="admin-table-wrap">
           <table className="admin-table products-table">
-            <thead><tr><th>Товар</th><th>Тип / сезон</th><th>Цена</th><th>Доступно</th><th>1С ID</th><th>Обновлён</th><th /></tr></thead>
+            <thead><tr><th>Товар</th><th>Тип / сезон</th><th>Цена</th><th>Доступно</th><th>Внешний ID</th><th>Обновлён</th></tr></thead>
             <tbody>{visible.map((product) => (
               <tr key={product.id}>
                 <td><div className="admin-product-cell"><MiniArt product={product} /><p><strong>{product.brand} {product.model}</strong><span>{product.subtitle}</span><small>{product.sku}</small></p></div></td>
@@ -319,23 +196,89 @@ function ProductsSection({ onEdit }: { onEdit: (product: Product) => void }) {
                 <td><span className={`inventory-pill ${product.stock - product.reserved <= 6 ? "low" : ""}`}>{product.stock - product.reserved} шт.</span><small>резерв {product.reserved}</small></td>
                 <td><code>{product.externalId || "—"}</code></td>
                 <td><span>{new Date(product.updatedAt).toLocaleDateString("ru-RU")}</span><small>{new Date(product.updatedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</small></td>
-                <td><div className="admin-row-actions"><button onClick={() => onEdit(product)} aria-label="Редактировать"><Pencil size={16} /></button><button className="danger" onClick={() => { if (window.confirm(`Удалить ${product.brand} ${product.model}?`)) deleteProduct(product.id); }} aria-label="Удалить"><Trash2 size={16} /></button></div></td>
               </tr>
             ))}</tbody>
           </table>
         </div>
         {visible.length === 0 && <div className="admin-empty"><Search /><strong>Товары не найдены</strong><span>Измените запрос или фильтр.</span></div>}
-        <div className="admin-table-footer"><span>Показано {visible.length} из {products.length} · свободно {availablePreparedPositions} из {INITIAL_CATALOG_CAPACITY}</span><button onClick={() => { if (window.confirm("Вернуть исходный демо-каталог?")) resetProducts(); }}>Восстановить демо-данные</button></div>
+        <div className="admin-table-footer"><span>Показано {visible.length} из {products.length}. Один файл может содержать до 5 000 строк.</span></div>
       </article>
     </>
   );
 }
 
 function OrdersSection() {
+  const [orders, setOrders] = useState<Array<{
+    id: string;
+    number: string;
+    status: string;
+    paymentStatus: string;
+    total: number;
+    createdAt: string;
+    items: Array<{ name: string; quantity: number }>;
+  }>>([]);
+  const [message, setMessage] = useState("Загружаем заказы…");
+  const [actionMessage, setActionMessage] = useState("");
+
+  async function updateStatus(orderId: string, status: string) {
+    setActionMessage("");
+    try {
+      const response = await fetch(`/api/admin/orders/${orderId}/status`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const result = (await response.json()) as { message?: string };
+      if (!response.ok) throw new Error(result.message || "Статус не обновлён.");
+      setOrders((current) =>
+        current.map((order) => (order.id === orderId ? { ...order, status } : order)),
+      );
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : "Статус не обновлён.");
+    }
+  }
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    void fetch("/api/admin/orders", {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: abortController.signal,
+    })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          items?: typeof orders;
+          message?: string;
+        };
+        if (!response.ok) throw new Error(result.message || "Заказы недоступны.");
+        setOrders(result.items ?? []);
+        setMessage("");
+      })
+      .catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setMessage(error instanceof Error ? error.message : "Заказы недоступны.");
+        }
+      });
+    return () => abortController.abort();
+  }, []);
+
   return (
     <>
-      <div className="admin-page-intro"><div><p className="eyebrow">Продажи</p><h1>Заказы</h1><span>Раздел подготовлен к чтению заказов из PostgreSQL.</span></div></div>
-      <article className="admin-card admin-empty"><ShoppingCart /><strong>Реальных заказов пока нет</strong><span>Демонстрационные имена, суммы и статусы удалены. После подключения защищенного admin API здесь появятся только заказы из базы данных.</span></article>
+      <div className="admin-page-intro"><div><p className="eyebrow">Продажи</p><h1>Заказы</h1><span>Данные загружаются из PostgreSQL через защищённый API.</span>{actionMessage && <small className="admin-login-message">{actionMessage}</small>}</div></div>
+      {message ? (
+        <article className="admin-card admin-empty"><ShoppingCart /><strong>{message}</strong></article>
+      ) : orders.length === 0 ? (
+        <article className="admin-card admin-empty"><ShoppingCart /><strong>Заказов пока нет</strong></article>
+      ) : (
+        <article className="admin-card products-card">
+          <div className="admin-table-wrap">
+            <table className="admin-table"><thead><tr><th>Номер</th><th>Дата</th><th>Состав</th><th>Статус</th><th>Сумма</th></tr></thead>
+              <tbody>{orders.map((order) => <tr key={order.id}><td><strong>{order.number}</strong></td><td>{new Date(order.createdAt).toLocaleString("ru-RU")}</td><td>{order.items.map((item) => `${item.name} × ${item.quantity}`).join(", ")}</td><td><select value={order.status} onChange={(event) => void updateStatus(order.id, event.target.value)}><option value="new">Новый</option><option value="confirmed">Подтверждён</option><option value="processing">В работе</option><option value="ready_for_pickup">Готов к выдаче</option><option value="shipped">Отправлен</option><option value="completed">Завершён</option><option value="cancelled">Отменён</option></select><small>Оплата: {order.paymentStatus}</small></td><td><strong>{formatPrice(order.total)}</strong></td></tr>)}</tbody>
+            </table>
+          </div>
+        </article>
+      )}
     </>
   );
 }
@@ -345,6 +288,23 @@ function SyncSection() {
     useState<OneCGatewayHealth | null>(null);
   const [gatewayCheckFailed, setGatewayCheckFailed] = useState(false);
   const [gatewayCheckInProgress, setGatewayCheckInProgress] = useState(false);
+  const [retryMessage, setRetryMessage] = useState("");
+
+  async function retryFailedOrders() {
+    setRetryMessage("");
+    try {
+      const response = await fetch("/api/admin/integrations/1c/retry", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const result = (await response.json()) as { retried?: number; message?: string };
+      if (!response.ok) throw new Error(result.message || "Повтор не запущен.");
+      setRetryMessage(`Возвращено в очередь: ${result.retried ?? 0}.`);
+      await refreshGatewayHealth();
+    } catch (error) {
+      setRetryMessage(error instanceof Error ? error.message : "Повтор не запущен.");
+    }
+  }
 
   async function refreshGatewayHealth() {
     setGatewayCheckInProgress(true);
@@ -400,7 +360,8 @@ function SyncSection() {
             <div><strong>{gatewayHealth?.orders.pending ?? 0}</strong><small>заказов ожидают отправки</small></div>
             <div><strong>{gatewayHealth?.orders.failed ?? 0}</strong><small>заказов требуют внимания</small></div>
           </div>
-          <button className="admin-secondary-button full" type="button" disabled title="Кнопка станет активной после подключения production-авторизации администратора"><RefreshCw size={16} /> Повторить неудачные отправки</button>
+          <button className="admin-secondary-button full" type="button" disabled={(gatewayHealth?.orders.failed ?? 0) === 0} onClick={() => void retryFailedOrders()}><RefreshCw size={16} /> Повторить неудачные отправки</button>
+          {retryMessage && <small>{retryMessage}</small>}
           <a className="admin-secondary-button full" href="/1c-integration.md" download>Скачать спецификацию <Download size={16} /></a>
         </article>
       </div>
@@ -430,10 +391,10 @@ function SettingsSection() {
   );
 }
 
-export function AdminDashboard() {
-  const { user, logout } = useStore();
+export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile }) {
+  const { user: hydratedUser, logout } = useStore();
+  const user = hydratedUser ?? authorizedUser;
   const [section, setSection] = useState<Section>("overview");
-  const [editor, setEditor] = useState<Product | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const navigation = useMemo(
@@ -446,8 +407,6 @@ export function AdminDashboard() {
     ],
     [],
   );
-
-  if (!user || user.role !== "admin") return <AdminLogin />;
 
   function navigate(value: Section) {
     setSection(value);
@@ -476,13 +435,12 @@ export function AdminDashboard() {
         </header>
         <div className="admin-content">
           {section === "overview" && <Overview onNavigate={navigate} />}
-          {section === "products" && <ProductsSection onEdit={setEditor} />}
+          {section === "products" && <ProductsSection />}
           {section === "orders" && <OrdersSection />}
           {section === "sync" && <SyncSection />}
           {section === "settings" && <SettingsSection />}
         </div>
       </section>
-      {editor && <ProductEditor product={editor} onClose={() => setEditor(null)} />}
     </main>
   );
 }

@@ -56,6 +56,12 @@ test("order total is calculated from locked backend prices", async () => {
     async getDeliveryPriceKopecks() {
       return 0;
     },
+    async listForUser() {
+      return [];
+    },
+    async listForAdministration() {
+      return [];
+    },
     async create(
       _database: DatabaseExecutor,
       order: PersistedOrderInput,
@@ -88,6 +94,8 @@ test("order total is calculated from locked backend prices", async () => {
     ],
     delivery: { method: "pickup" },
     requiresTireService: false,
+    offerAccepted: true,
+    personalDataConsent: true,
   });
 
   assert.equal(createdOrderInput?.totalKopecks, 49_380);

@@ -6,6 +6,19 @@ function kopecksToRubles(value: number | string): number {
   return Number(value) / 100;
 }
 
+function buildProductSubtitle(row: {
+  kind: "tire" | "wheel";
+  width: number;
+  profile: number;
+  diameter: number;
+  pcd: string | null;
+}): string {
+  if (row.kind === "tire") {
+    return `${row.width}/${row.profile} R${row.diameter}`;
+  }
+  return [`R${row.diameter}`, row.pcd].filter(Boolean).join(" ");
+}
+
 export class CatalogService {
   constructor(
     private readonly pool: Pool,
@@ -22,7 +35,7 @@ export class CatalogService {
       condition: row.condition,
       brand: row.brand,
       model: row.model,
-      subtitle: row.name,
+      subtitle: buildProductSubtitle(row),
       width: row.width,
       profile: row.profile,
       diameter: row.diameter,

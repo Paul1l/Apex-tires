@@ -60,6 +60,27 @@ export function validateBusinessConfig(
   if (config.catalog.dataMode !== "database") {
     issues.push({ field: "catalog.dataMode", message: "Production-каталог должен получать товары из базы данных." });
   }
+  if (
+    config.marketing.rating !== null &&
+    (config.marketing.rating < 0 || config.marketing.rating > 5)
+  ) {
+    issues.push({ field: "marketing.rating", message: "Рейтинг должен быть от 0 до 5." });
+  }
+  for (const [field, value] of [
+    ["marketing.yearsExperience", config.marketing.yearsExperience],
+    ["marketing.clientCount", config.marketing.clientCount],
+    ["marketing.returnDays", config.marketing.returnDays],
+  ] as const) {
+    if (value !== null && !Number.isInteger(value)) {
+      issues.push({ field, message: "Подтверждённый показатель должен быть целым числом." });
+    }
+  }
+  if (config.features.installmentEnabled) {
+    issues.push({
+      field: "features.installmentEnabled",
+      message: "Рассрочку нельзя включить до подключения реального PaymentProvider.",
+    });
+  }
 
   return issues;
 }

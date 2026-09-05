@@ -1,15 +1,12 @@
-export interface OrderNotification {
-  orderId: string;
-  orderNumber: string;
+import type { JsonValue } from "../../types/common";
+
+export interface NotificationMessage {
   recipient: string;
+  template: string;
+  payload: JsonValue;
 }
 
 export interface NotificationProvider {
   readonly channel: "email" | "telegram";
-  sendOrderCreated(notification: OrderNotification): Promise<void>;
+  send(notification: NotificationMessage): Promise<void>;
 }
-
-/**
- * Concrete email or Telegram implementations are added only after the owner
- * approves the channel, recipient and personal-data processing arrangement.
- */

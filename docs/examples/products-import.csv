@@ -1,2 +1,2 @@
-external_id,sku,name,brand,model,kind,condition,width,profile,diameter,season,studded,runflat,xl,wheel_type,price,old_price,stock,is_active,source_updated_at
-EXAMPLE-PRODUCT-001,EXAMPLE-SKU-001,ПРИМЕР — удалить перед импортом,ПРИМЕР,Модель,tire,new,205,55,16,summer,false,false,false,,0,,0,false,2026-09-04T00:00:00+07:00
+external_id,sku,name,brand,model,kind,condition,width,profile,diameter,season,studded,runflat,xl,wheel_type,pcd,offset,center_bore,color,country,price,old_price,discount,stock,reserved,warehouse_external_id,warehouse_code,warehouse_name,image_url,is_active,source_updated_at
+EXAMPLE-PRODUCT-001,EXAMPLE-SKU-001,ПРИМЕР — удалить перед импортом,ПРИМЕР,Модель,tire,new,205,55,16,summer,false,false,false,,,,,,,0,,,0,0,EXAMPLE-WAREHOUSE,EXAMPLE,ПРИМЕР — указать реальный склад,,false,2026-09-04T00:00:00+07:00

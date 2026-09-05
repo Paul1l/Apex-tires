@@ -77,11 +77,12 @@ export const stockSchema = z
     message: "reserved не может превышать quantity",
   });
 
-const fitmentSchema = z
+export const fitmentSchema = z
   .object({
     make: z.string().trim().min(1).max(120),
     model: z.string().trim().min(1).max(160),
     generation: z.string().trim().max(120).optional(),
+    modification: z.string().trim().max(160).optional(),
     yearFrom: z.number().int().min(1900).max(2200).optional(),
     yearTo: z.number().int().min(1900).max(2200).optional(),
     isOem: z.boolean().default(false),
@@ -106,8 +107,16 @@ export const productFitmentsSchema = z.object({
 export const orderStatusSchema = z.object({
   externalOrderId: externalIdSchema,
   siteOrderId: z.uuid(),
-  status: z.string().trim().min(1).max(80),
-  paymentStatus: z.string().trim().min(1).max(80),
+  status: z.enum([
+    "new",
+    "confirmed",
+    "processing",
+    "ready_for_pickup",
+    "shipped",
+    "completed",
+    "cancelled",
+  ]),
+  paymentStatus: z.enum(["pending", "paid", "failed", "refunded"]),
   sourceUpdatedAt: isoTimestampSchema,
 });
 

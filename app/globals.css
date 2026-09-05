@@ -5383,7 +5383,7 @@ footer {
 @media (max-width: 720px) {
   .contacts-page { padding-bottom: 100px; }
   .contacts-hero { padding-top: 46px; }
-  .mobile-contact-actions {
+.mobile-contact-actions {
     position: fixed;
     z-index: 20;
     right: 10px;
@@ -5405,4 +5405,61 @@ footer {
     text-decoration: none;
   }
   .mobile-contact-actions svg { width: 16px; }
+}
+
+.account-orders {
+  display: grid;
+  gap: 10px;
+}
+
+.account-order {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.account-order div {
+  display: grid;
+  gap: 3px;
+}
+
+.account-order div:last-child {
+  text-align: right;
+}
+
+.account-order span,
+.import-report small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.csv-import-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.csv-import-card > label {
+  display: grid;
+  gap: 6px;
+}
+
+.csv-import-card input[type="file"],
+.csv-import-card select {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+}
+
+.import-report {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--paper-2);
 }

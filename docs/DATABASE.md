@@ -6,7 +6,7 @@ Production read model и первичное хранилище backend — Postg
 создается воспроизводимой миграцией:
 
 `server/database/migrations/001_initial_postgresql.sql` и
-`002_local_business_readiness.sql`.
+`002_local_business_readiness.sql`, `003_catalog_auth_and_cart.sql`.
 
 Реальная база пока не развернута и строка подключения не хранится в
 репозитории. Для магазина с персональными данными PostgreSQL и backend должны
@@ -41,6 +41,7 @@ Runner берет advisory lock, выполняет каждый новый SQL-
 | `used_product_lots`, `used_product_lot_images` | конкретные б/у комплекты и их реальные фотографии |
 | `vehicle_fitment_requests` | запросы покупателей по отсутствующим автомобилям |
 | `notification_outbox` | надежная очередь email/Telegram без отправки из HTTP-транзакции |
+| `shopping_carts`, `shopping_cart_items` | постоянная корзина зарегистрированного покупателя |
 
 ## Идентификаторы и деньги
 
@@ -54,7 +55,8 @@ Runner берет advisory lock, выполняет каждый новый SQL-
 ## Подготовленные 100 позиций
 
 PostgreSQL не требует заранее создавать пустые строки. Таблица `products`
-готова принять 100 начальных позиций и масштабироваться дальше. Индексы есть по
+готова принять 100 и более позиций и масштабироваться дальше. CSV importer
+принимает до 5 000 строк за пакет. Индексы есть по
 внешним ID, SKU, бренду, активности и типоразмеру.
 
 ## Эксплуатация

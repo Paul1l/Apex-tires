@@ -802,6 +802,44 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
 
 function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user, logout } = useStore();
+  const [orders, setOrders] = useState<Array<{
+    id: string;
+    number: string;
+    status: string;
+    paymentStatus: string;
+    total: number;
+    createdAt: string;
+  }>>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersMessage, setOrdersMessage] = useState("");
+
+  useEffect(() => {
+    if (!open || !user) return;
+    const abortController = new AbortController();
+    setOrdersLoading(true);
+    setOrdersMessage("");
+    void fetch("/api/v1/account/orders", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: abortController.signal,
+    })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          items?: typeof orders;
+          message?: string;
+        };
+        if (!response.ok) throw new Error(result.message || "История заказов недоступна.");
+        setOrders(result.items ?? []);
+      })
+      .catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setOrdersMessage(error instanceof Error ? error.message : "История заказов недоступна.");
+        }
+      })
+      .finally(() => setOrdersLoading(false));
+    return () => abortController.abort();
+  }, [open, user]);
+
   return (
     <Overlay open={open} onClose={onClose} className="drawer-overlay">
       <aside className="drawer account-drawer">
@@ -811,9 +849,9 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
         </div>
         <div className="profile-card">
           <span className="profile-avatar">{user?.name.slice(0, 1).toUpperCase()}</span>
-          <div><strong>{user?.email}</strong><span>{user?.role === "admin" ? "Администратор" : "Покупатель"}</span></div>
+          <div><strong>{user?.email}</strong><span>{user?.role === "admin" ? "Администратор" : user?.role === "manager" ? "Менеджер" : "Покупатель"}</span></div>
         </div>
-        {user?.role === "admin" && (
+        {(user?.role === "admin" || user?.role === "manager") && (
           <Link className="primary-button full" href="/admin">Открыть панель управления <ArrowRight size={17} /></Link>
         )}
         <div className="account-section">
@@ -826,7 +864,22 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
         </div>
         <div className="account-section">
           <p className="eyebrow">История</p>
-          <div className="empty-compact"><PackageCheck /><span>Заказов пока нет</span></div>
+          {ordersLoading ? (
+            <div className="empty-compact"><PackageCheck /><span>Загружаем заказы…</span></div>
+          ) : ordersMessage ? (
+            <div className="empty-compact"><PackageCheck /><span>{ordersMessage}</span></div>
+          ) : orders.length === 0 ? (
+            <div className="empty-compact"><PackageCheck /><span>Заказов пока нет</span></div>
+          ) : (
+            <div className="account-orders">
+              {orders.map((order) => (
+                <article key={order.id} className="account-order">
+                  <div><strong>{order.number}</strong><span>{new Date(order.createdAt).toLocaleDateString("ru-RU")}</span></div>
+                  <div><strong>{formatPrice(order.total)}</strong><span>Статус: {order.status}</span></div>
+                </article>
+              ))}
+            </div>
+          )}
         </div>
         <button className="logout-button" onClick={() => { logout(); onClose(); }}>Выйти из аккаунта</button>
       </aside>
@@ -889,14 +942,18 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
   const [heroWidth, setHeroWidth] = useState("225");
   const [heroProfile, setHeroProfile] = useState("45");
   const [heroDiameter, setHeroDiameter] = useState("18");
-  const [carBrand, setCarBrand] = useState("BMW");
+  const [carBrand, setCarBrand] = useState("");
   const [carModel, setCarModel] = useState("");
   const [carYear, setCarYear] = useState("2024");
   const [carGeneration, setCarGeneration] = useState("");
   const [vehicleMakes, setVehicleMakes] = useState<VehicleMake[]>([]);
   const [vehicleModels, setVehicleModels] = useState<VehicleModel[]>([]);
+  const [vehicleGenerations, setVehicleGenerations] = useState<VehicleModel[]>([]);
   const [vehicleMakesLoading, setVehicleMakesLoading] = useState(false);
   const [vehicleModelsLoading, setVehicleModelsLoading] = useState(false);
+  const [vehicleGenerationsLoading, setVehicleGenerationsLoading] = useState(false);
+  const [fitmentProductIds, setFitmentProductIds] = useState<string[] | null>(null);
+  const [fitmentLookupLoading, setFitmentLookupLoading] = useState(false);
   const [vehicleCatalogMessage, setVehicleCatalogMessage] = useState("");
   const [visible, setVisible] = useState(8);
   const [quickView, setQuickView] = useState<Product | null>(null);
@@ -928,6 +985,9 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
 
   const selectedVehicleFitmentCount = useMemo(() => {
     if (!filters.carMake || !filters.carModel) return 0;
+    if (businessConfig.catalog.dataMode === "database") {
+      return fitmentProductIds?.length ?? 0;
+    }
     const selectedVehicleName =
       `${filters.carMake} ${filters.carModel}`.trim().toLocaleLowerCase("ru");
     return products.filter((product) =>
@@ -936,7 +996,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
           compatibleCar.trim().toLocaleLowerCase("ru") === selectedVehicleName,
       ),
     ).length;
-  }, [filters.carMake, filters.carModel, products]);
+  }, [filters.carMake, filters.carModel, products, fitmentProductIds]);
 
   const filteredProducts = useMemo(() => {
     const list = products.filter((product) => {
@@ -951,6 +1011,12 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       if (filters.studded && !product.studded) return false;
       if (filters.runflat && !product.runflat) return false;
       if (
+        businessConfig.catalog.dataMode === "database" &&
+        fitmentProductIds !== null &&
+        !fitmentProductIds.includes(product.id)
+      ) return false;
+      if (
+        businessConfig.catalog.dataMode === "preview" &&
         selectedVehicleFitmentCount > 0 &&
         filters.carMake &&
         filters.carModel &&
@@ -974,7 +1040,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       if (filters.sort === "rating") return (b.rating ?? 0) - (a.rating ?? 0);
       return Number(Boolean(b.featured)) - Number(Boolean(a.featured)) || (b.reviews ?? 0) - (a.reviews ?? 0);
     });
-  }, [filters, products, selectedVehicleFitmentCount]);
+  }, [filters, products, selectedVehicleFitmentCount, fitmentProductIds]);
 
   const selectedMakeIsKnown = vehicleMakes.some(
     (make) => make.name.toLocaleLowerCase("ru") === carBrand.toLocaleLowerCase("ru"),
@@ -984,6 +1050,13 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       model.name.toLocaleLowerCase("ru") ===
       carModel.trim().toLocaleLowerCase("ru"),
   );
+  const selectedGenerationIsKnown =
+    !carGeneration ||
+    vehicleGenerations.some(
+      (generation) =>
+        generation.name.toLocaleLowerCase("ru") ===
+        carGeneration.trim().toLocaleLowerCase("ru"),
+    );
 
   useEffect(() => {
     if (selectorTab !== "car" || vehicleMakes.length > 0) return;
@@ -1005,7 +1078,9 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       .then((result) => {
         setVehicleMakes(result.items);
         setVehicleCatalogMessage(
-          result.source === "regional-fallback"
+          result.source === "postgresql"
+            ? `В базе применяемости марок: ${result.items.length}.`
+            : result.source === "regional-fallback"
             ? "Используется резервный справочник марок."
             : `Доступно марок: ${result.items.length}.`,
         );
@@ -1056,6 +1131,37 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     return () => abortController.abort();
   }, [carBrand, carYear, selectedMakeIsKnown, selectorTab]);
 
+  useEffect(() => {
+    if (
+      businessConfig.catalog.dataMode !== "database" ||
+      selectorTab !== "car" ||
+      !selectedMakeIsKnown ||
+      !selectedModelIsKnown
+    ) {
+      setVehicleGenerations([]);
+      return;
+    }
+    const abortController = new AbortController();
+    setVehicleGenerationsLoading(true);
+    void fetch(
+      `/api/vehicles/generations?make=${encodeURIComponent(carBrand)}&model=${encodeURIComponent(carModel)}&year=${encodeURIComponent(carYear)}`,
+      { cache: "no-store", signal: abortController.signal },
+    )
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<{ items: VehicleModel[] }>;
+      })
+      .then((result) => setVehicleGenerations(result.items))
+      .catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setVehicleGenerations([]);
+          setVehicleCatalogMessage("Поколения автомобиля временно недоступны.");
+        }
+      })
+      .finally(() => setVehicleGenerationsLoading(false));
+    return () => abortController.abort();
+  }, [carBrand, carModel, carYear, selectedMakeIsKnown, selectedModelIsKnown, selectorTab]);
+
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
@@ -1069,6 +1175,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     setCarBrand(nextBrand);
     setCarModel("");
     setCarGeneration("");
+    setFitmentProductIds(null);
     const exactMake = vehicleMakes.find(
       (make) =>
         make.name.toLocaleLowerCase("ru") ===
@@ -1083,9 +1190,10 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     setCarYear(nextYear);
     setCarModel("");
     setCarGeneration("");
+    setFitmentProductIds(null);
   }
 
-  function submitHeroSearch() {
+  async function submitHeroSearch() {
     if (selectorTab === "size") {
       setFilters((current) => ({
         ...current,
@@ -1100,9 +1208,43 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       }));
       notify("Подбор по размеру применён");
     } else {
-      if (!selectedMakeIsKnown || !selectedModelIsKnown) {
+      if (!selectedMakeIsKnown || !selectedModelIsKnown || !selectedGenerationIsKnown) {
         notify("Сначала выберите марку и модель из справочника");
         return;
+      }
+      if (businessConfig.catalog.dataMode === "database") {
+        setFitmentLookupLoading(true);
+        try {
+          const searchParameters = new URLSearchParams({
+            make: carBrand,
+            model: carModel.trim(),
+            year: carYear,
+          });
+          if (carGeneration.trim()) {
+            searchParameters.set("generation", carGeneration.trim());
+          }
+          const response = await fetch(
+            `/api/v1/fitments/products?${searchParameters.toString()}`,
+            { cache: "no-store" },
+          );
+          const result = (await response.json()) as {
+            productIds?: string[];
+            message?: string;
+          };
+          if (!response.ok) throw new Error(result.message || "Подбор временно недоступен.");
+          setFitmentProductIds(result.productIds ?? []);
+          notify(
+            result.productIds?.length
+              ? `Найдено подходящих товаров: ${result.productIds.length}`
+              : "Для автомобиля пока нет проверенной применяемости",
+          );
+        } catch (error) {
+          setFitmentProductIds(null);
+          notify(error instanceof Error ? error.message : "Подбор временно недоступен.");
+          return;
+        } finally {
+          setFitmentLookupLoading(false);
+        }
       }
       setFilters((current) => ({
         ...current,
@@ -1121,11 +1263,13 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
             selectedVehicleName,
         ),
       );
-      notify(
-        fitmentIsMapped
-          ? `Показываем товары для ${carBrand} ${carModel}`
-          : "Автомобиль выбран — размеры будут доступны после загрузки применяемости",
-      );
+      if (businessConfig.catalog.dataMode === "preview") {
+        notify(
+          fitmentIsMapped
+            ? `Показываем товары для ${carBrand} ${carModel}`
+            : "Автомобиль выбран — размеры будут доступны после загрузки применяемости",
+        );
+      }
     }
     setVisible(8);
     scrollToCatalog();
@@ -1266,6 +1410,12 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
               <span><strong>Размер</strong> ширина, профиль, диаметр</span>
               <span><strong>Автомобиль</strong> марка и модель</span>
               <span><strong>Без регистрации</strong> гостевой заказ</span>
+              {businessConfig.marketing.yearsExperience !== null && (
+                <span><strong>{businessConfig.marketing.yearsExperience} лет</strong> подтверждённый срок работы</span>
+              )}
+              {businessConfig.marketing.clientCount !== null && (
+                <span><strong>{businessConfig.marketing.clientCount.toLocaleString("ru-RU")}</strong> подтверждённых клиентов</span>
+              )}
             </div>
           </div>
           <div className="selector-card" id="selector">
@@ -1349,10 +1499,12 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                     onValueChange={(nextModel) => {
                       setCarModel(nextModel);
                       setCarGeneration("");
+                      setFitmentProductIds(null);
                     }}
                     onOptionSelect={(option) => {
                       setCarModel(option.name);
                       setCarGeneration("");
+                      setFitmentProductIds(null);
                     }}
                   />
                   <label>
@@ -1366,23 +1518,52 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                       ))}
                     </select>
                   </label>
-                  <label>
-                    <span>Поколение / кузов</span>
-                    <input
+                  {businessConfig.catalog.dataMode === "database" ? (
+                    <SearchableVehicleSelect
+                      id="vehicle-generation"
+                      label="Поколение / кузов"
                       value={carGeneration}
-                      onChange={(event) => setCarGeneration(event.target.value)}
-                      placeholder="Необязательно"
+                      options={vehicleGenerations}
+                      placeholder={
+                        vehicleGenerationsLoading
+                          ? "Загружаем поколения…"
+                          : "Выберите поколение"
+                      }
+                      helperText={
+                        vehicleGenerations.length > 0
+                          ? `Доступно вариантов: ${vehicleGenerations.length}`
+                          : "Для модели поколение не уточняется"
+                      }
+                      loading={vehicleGenerationsLoading}
+                      disabled={!selectedModelIsKnown || vehicleGenerationsLoading}
+                      onValueChange={(value) => {
+                        setCarGeneration(value);
+                        setFitmentProductIds(null);
+                      }}
+                      onOptionSelect={(option) => {
+                        setCarGeneration(option.name);
+                        setFitmentProductIds(null);
+                      }}
                     />
-                    <small>Например: G20, XV70 или рестайлинг</small>
-                  </label>
+                  ) : (
+                    <label>
+                      <span>Поколение / кузов</span>
+                      <input
+                        value={carGeneration}
+                        onChange={(event) => setCarGeneration(event.target.value)}
+                        placeholder="Необязательно"
+                      />
+                      <small>Например: G20, XV70 или рестайлинг</small>
+                    </label>
+                  )}
                 </div>
                 <p className="selector-hint">
                   {vehicleCatalogMessage ||
                     "Марки и модели загружаются из автомобильного справочника."}
                 </p>
                 <p className="selector-fitment-note">
-                  Точная применяемость шин и дисков появится после загрузки таблицы
-                  соответствий из 1С.
+                  В рабочем режиме используются только проверенные записи
+                  применяемости из PostgreSQL.
                 </p>
                 <FitmentRequestForm
                   initialMake={carBrand}
@@ -1399,10 +1580,13 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                 selectorTab === "car" &&
                 (!selectedMakeIsKnown ||
                   !selectedModelIsKnown ||
-                  vehicleModelsLoading)
+                  !selectedGenerationIsKnown ||
+                  vehicleModelsLoading ||
+                  vehicleGenerationsLoading ||
+                  fitmentLookupLoading)
               }
             >
-              <Search size={19} /> Показать подходящие <ArrowRight size={18} />
+              <Search size={19} /> {fitmentLookupLoading ? "Проверяем…" : "Показать подходящие"} {!fitmentLookupLoading && <ArrowRight size={18} />}
             </button>
           </div>
         </div>
@@ -1524,7 +1708,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
             <h2>Не просто продаём.<br />Отвечаем за результат.</h2>
             <p>Возможность монтажа и условия работ подтверждаются при обработке заказа.</p>
             <div className="service-steps">
-              <div><span>01</span><p><strong>Подбор</strong>По VIN или параметрам автомобиля</p></div>
+              <div><span>01</span><p><strong>Подбор</strong>По марке, модели и поколению автомобиля</p></div>
               <div><span>02</span><p><strong>Проверка</strong>Контроль параметров автомобиля</p></div>
               <div><span>03</span><p><strong>Установка</strong>Условия подтвердит менеджер</p></div>
             </div>

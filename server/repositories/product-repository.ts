@@ -45,6 +45,21 @@ function rublesToKopecks(amount: number): number {
 }
 
 export class ProductRepository {
+  async findExistingExternalIds(
+    database: DatabaseExecutor,
+    sourceSystem: string,
+    externalIds: string[],
+  ): Promise<Set<string>> {
+    if (externalIds.length === 0) return new Set();
+    const result = await database.query<{ external_id: string }>(
+      `SELECT external_id
+       FROM products
+       WHERE source_system = $1 AND external_id = ANY($2::text[])`,
+      [sourceSystem, externalIds],
+    );
+    return new Set(result.rows.map((row) => row.external_id));
+  }
+
   async listActiveCatalog(
     database: DatabaseExecutor,
     limit = 1_000,
@@ -309,32 +324,35 @@ export class ProductRepository {
   async replaceFitments(
     database: DatabaseExecutor,
     item: ProductFitmentsSyncItem,
-    sourceSystem: string,
+    productSourceSystem: string,
+    fitmentSourceSystem = productSourceSystem,
   ): Promise<void> {
     const productResult = await database.query<{ id: string }>(
       `SELECT id FROM products
        WHERE source_system = $1 AND external_id = $2`,
-      [sourceSystem, item.externalId],
+      [productSourceSystem, item.externalId],
     );
     if (productResult.rowCount === 0) throw new Error("PRODUCT_NOT_FOUND");
 
     const productId = productResult.rows[0].id;
     await database.query(
       "DELETE FROM product_fitments WHERE product_id = $1 AND source_system = $2",
-      [productId, sourceSystem],
+      [productId, fitmentSourceSystem],
     );
     for (const fitment of item.fitments) {
       await database.query(
         `INSERT INTO product_fitments (
-           product_id, source_system, make, model, generation,
-           year_from, year_to, is_oem, data_source, verified, verified_at, notes
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+         product_id, source_system, make, model, generation,
+           modification, year_from, year_to, is_oem, data_source, verified,
+           verified_at, notes
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           productId,
-          sourceSystem,
+          fitmentSourceSystem,
           fitment.make,
           fitment.model,
           fitment.generation ?? null,
+          fitment.modification ?? null,
           fitment.yearFrom ?? null,
           fitment.yearTo ?? null,
           fitment.isOem,

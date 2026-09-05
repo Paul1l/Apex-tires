@@ -5,6 +5,11 @@ import {
   sortVehicleModels,
   type VehicleModel,
 } from "@/lib/vehicle-catalog";
+import { businessConfig } from "@/config/business";
+import {
+  createApplicationServices,
+  databaseIsConfigured,
+} from "@/server/bootstrap/application-services";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +63,47 @@ export async function GET(request: NextRequest) {
       { ok: false, code: "INVALID_YEAR", message: "Укажите корректный год." },
       { status: 422 },
     );
+  }
+
+  if (businessConfig.catalog.dataMode === "database") {
+    if (!databaseIsConfigured()) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "FITMENT_STORAGE_NOT_CONFIGURED",
+          message: "База применяемости пока не подключена.",
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    try {
+      const models = await createApplicationServices().fitmentProvider.listModels(
+        makeName,
+        requestedYear,
+      );
+      return NextResponse.json(
+        {
+          ok: true,
+          source: "postgresql",
+          make: makeName,
+          year: requestedYear,
+          items: sortVehicleModels(
+            models.map((name) => ({ id: name.toLocaleLowerCase("ru"), name })),
+          ),
+        },
+        { headers: { "Cache-Control": "public, s-maxage=300" } },
+      );
+    } catch (error) {
+      console.error("PostgreSQL vehicle models request failed", error);
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "FITMENT_STORAGE_UNAVAILABLE",
+          message: "Модели автомобилей временно недоступны.",
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
   }
 
   const supplementalModels = getSupplementalModelsForMake(makeName);

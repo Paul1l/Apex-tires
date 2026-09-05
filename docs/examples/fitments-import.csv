@@ -1,2 +1,2 @@
-product_external_id,make,model,generation,year_from,year_to,modification,is_oem,source,verified,verified_at,notes
-EXAMPLE-PRODUCT-001,ПРИМЕР,ПРИМЕР,,2020,2024,,false,manual,false,,Строка-шаблон; удалить перед рабочим импортом
+product_source_system,product_external_id,make,model,generation,year_from,year_to,modification,is_oem,verified,verified_at,notes
+csv,EXAMPLE-PRODUCT-001,ПРИМЕР,ПРИМЕР,,2020,2024,,false,false,,Строка-шаблон; удалить перед рабочим импортом

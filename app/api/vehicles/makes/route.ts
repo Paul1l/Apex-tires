@@ -6,6 +6,11 @@ import {
   sortVehicleMakes,
   type VehicleMake,
 } from "@/lib/vehicle-catalog";
+import { businessConfig } from "@/config/business";
+import {
+  createApplicationServices,
+  databaseIsConfigured,
+} from "@/server/bootstrap/application-services";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +53,41 @@ async function fetchMakesForVehicleType(
  * catalog, supplemented with brands relevant to the Russian market.
  */
 export async function GET() {
+  if (businessConfig.catalog.dataMode === "database") {
+    if (!databaseIsConfigured()) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "FITMENT_STORAGE_NOT_CONFIGURED",
+          message: "База применяемости пока не подключена.",
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    try {
+      const makes = await createApplicationServices().fitmentProvider.listMakes();
+      return NextResponse.json(
+        {
+          ok: true,
+          source: "postgresql",
+          items: sortVehicleMakes(
+            makes.map((name) => ({ id: normalizeVehicleMakeName(name), name })),
+          ),
+        },
+        { headers: { "Cache-Control": "public, s-maxage=300" } },
+      );
+    } catch (error) {
+      console.error("PostgreSQL vehicle makes request failed", error);
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "FITMENT_STORAGE_UNAVAILABLE",
+          message: "Справочник автомобилей временно недоступен.",
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+  }
   const supplementalMakes = getSupplementalVehicleMakes();
 
   try {

@@ -24,6 +24,8 @@ export const createOrderSchema = z.object({
     address: z.string().trim().max(500).optional(),
   }),
   requiresTireService: z.boolean().default(false),
+  offerAccepted: z.literal(true),
+  personalDataConsent: z.literal(true),
   comment: z.string().trim().max(1_000).optional(),
 }).refine(
   (order) =>

@@ -17,7 +17,15 @@ type CheckoutOrderRepository = Pick<
   | "getDeliveryPriceKopecks"
   | "reserveStock"
   | "create"
+  | "listForUser"
+  | "listForAdministration"
 >;
+
+export interface CreateOrderContext {
+  userId?: string;
+  requesterAddress?: string | null;
+  userAgent?: string | null;
+}
 
 export interface OrderServiceDependencies {
   pool: Pool;
@@ -53,6 +61,7 @@ export class OrderService {
 
   async createOrder(
     input: CreateOrderInput,
+    context: CreateOrderContext = {},
   ): Promise<CreatedOrderRow & { duplicate?: true }> {
     if (!this.enabledDeliveryMethods.includes(input.delivery.method)) {
       throw new ApplicationError({
@@ -158,6 +167,7 @@ export class OrderService {
 
       return this.orderRepository.create(database, {
         ...input,
+        ...context,
         items: normalizedItems,
         subtotalKopecks,
         deliveryKopecks,
@@ -165,5 +175,43 @@ export class OrderService {
         managerNotificationEmail: this.managerNotificationEmail,
       });
     });
+  }
+
+  async getOrdersForUser(userId: string) {
+    const orders = await this.orderRepository.listForUser(this.pool, userId);
+    return orders.map((order) => ({
+      id: order.id,
+      number: order.number,
+      status: order.status,
+      paymentStatus: order.payment_status,
+      total: Number(order.total_kopecks) / 100,
+      deliveryMethod: order.delivery_method,
+      createdAt: new Date(order.created_at).toISOString(),
+      items: order.items.map((item) => ({
+        name: item.product_name,
+        sku: item.sku,
+        quantity: item.quantity,
+        total: Number(item.total_kopecks) / 100,
+      })),
+    }));
+  }
+
+  async getOrdersForAdministration() {
+    const orders = await this.orderRepository.listForAdministration(this.pool);
+    return orders.map((order) => ({
+      id: order.id,
+      number: order.number,
+      status: order.status,
+      paymentStatus: order.payment_status,
+      total: Number(order.total_kopecks) / 100,
+      deliveryMethod: order.delivery_method,
+      createdAt: new Date(order.created_at).toISOString(),
+      items: order.items.map((item) => ({
+        name: item.product_name,
+        sku: item.sku,
+        quantity: item.quantity,
+        total: Number(item.total_kopecks) / 100,
+      })),
+    }));
   }
 }

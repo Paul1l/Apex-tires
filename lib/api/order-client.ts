@@ -13,6 +13,8 @@ interface CreateOrderInput {
     address?: string;
   };
   requiresTireService: boolean;
+  offerAccepted: true;
+  personalDataConsent: true;
   comment?: string;
 }
 

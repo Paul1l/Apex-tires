@@ -15,6 +15,20 @@ export class DeliveryConfigurationError extends Error {
   }
 }
 
+export interface AuthenticationEmailEnvironment {
+  YANDEX_POSTBOX_ACCESS_KEY_ID?: string;
+  YANDEX_POSTBOX_SECRET_ACCESS_KEY?: string;
+  YANDEX_POSTBOX_FROM_EMAIL?: string;
+  YANDEX_POSTBOX_FROM_NAME?: string;
+}
+
+export interface TransactionalEmail {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -105,10 +119,9 @@ async function createPostboxAuthorizationHeaders(
  * Sends a six-digit authentication code through Yandex Cloud Postbox.
  * Provider credentials remain only in the server environment.
  */
-export async function deliverAuthenticationCode(
-  environment: CloudflareEnv,
-  email: string,
-  code: string,
+export async function sendYandexPostboxEmail(
+  environment: AuthenticationEmailEnvironment,
+  email: TransactionalEmail,
 ): Promise<void> {
   const accessKeyId = environment.YANDEX_POSTBOX_ACCESS_KEY_ID;
   const secretAccessKey = environment.YANDEX_POSTBOX_SECRET_ACCESS_KEY;
@@ -124,20 +137,20 @@ export async function deliverAuthenticationCode(
 
   const requestBody = JSON.stringify({
     FromEmailAddress: `${fromName} <${fromEmail}>`,
-    Destination: { ToAddresses: [email] },
+    Destination: { ToAddresses: [email.to] },
     Content: {
       Simple: {
         Subject: {
-          Data: `Код входа в ${businessConfig.brandName}`,
+          Data: email.subject,
           Charset: "UTF-8",
         },
         Body: {
           Text: {
-            Data: `Ваш код подтверждения: ${code}\n\nКод действует 10 минут. Никому его не сообщайте.`,
+            Data: email.text,
             Charset: "UTF-8",
           },
           Html: {
-            Data: `<div style="font-family:Arial,sans-serif;color:#131722"><p>Ваш код подтверждения:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px">${code}</p><p>Код действует 10 минут. Никому его не сообщайте.</p></div>`,
+            Data: email.html,
             Charset: "UTF-8",
           },
         },
@@ -154,6 +167,7 @@ export async function deliverAuthenticationCode(
     method: "POST",
     headers: authorizationHeaders,
     body: requestBody,
+    signal: AbortSignal.timeout(8_000),
   });
 
   if (!response.ok) {
@@ -162,4 +176,17 @@ export async function deliverAuthenticationCode(
       `Yandex Postbox вернул HTTP ${response.status}: ${errorBody.slice(0, 500)}`,
     );
   }
+}
+
+export async function deliverAuthenticationCode(
+  environment: AuthenticationEmailEnvironment,
+  email: string,
+  code: string,
+): Promise<void> {
+  await sendYandexPostboxEmail(environment, {
+    to: email,
+    subject: `Код входа в ${businessConfig.brandName}`,
+    text: `Ваш код подтверждения: ${code}\n\nКод действует 10 минут. Никому его не сообщайте.`,
+    html: `<div style="font-family:Arial,sans-serif;color:#131722"><p>Ваш код подтверждения:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px">${code}</p><p>Код действует 10 минут. Никому его не сообщайте.</p></div>`,
+  });
 }

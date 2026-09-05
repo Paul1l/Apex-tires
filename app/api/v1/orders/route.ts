@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isIP } from "node:net";
 import {
   createApplicationServices,
   databaseIsConfigured,
@@ -8,9 +9,18 @@ import { ApplicationError, toSafeError } from "@/server/utils/errors";
 import { readJsonRequest } from "@/server/utils/http";
 import { createOrderSchema } from "@/server/validators/order-schemas";
 import { formatValidationIssues } from "@/server/validators/one-c-schemas";
+import { getAuthenticatedUser } from "@/server/security/request-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+function readRequesterIpAddress(request: Request): string | null {
+  const address =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    null;
+  return address && isIP(address) ? address : null;
+}
 
 export async function POST(request: Request) {
   try {
@@ -35,8 +45,14 @@ export async function POST(request: Request) {
       });
     }
 
+    const authenticatedUser = await getAuthenticatedUser(request);
     const order = await createApplicationServices().orderService.createOrder(
       validationResult.data,
+      {
+        userId: authenticatedUser?.id,
+        requesterAddress: readRequesterIpAddress(request),
+        userAgent: request.headers.get("user-agent")?.slice(0, 500) ?? null,
+      },
     );
     return NextResponse.json(
       {

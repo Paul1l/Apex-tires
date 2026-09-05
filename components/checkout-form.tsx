@@ -57,6 +57,8 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
         },
         requiresTireService:
           formData.get("requiresTireService") === "on",
+        offerAccepted: true,
+        personalDataConsent: true,
         comment: String(formData.get("comment") || "") || undefined,
       });
       onSuccess(order.number);

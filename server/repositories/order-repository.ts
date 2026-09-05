@@ -37,6 +37,9 @@ export interface PersistedOrderInput extends Omit<CreateOrderInput, "items"> {
   deliveryKopecks: number;
   totalKopecks: number;
   managerNotificationEmail?: string;
+  userId?: string;
+  requesterAddress?: string | null;
+  userAgent?: string | null;
 }
 
 interface IntegrationOrderItemRow {
@@ -77,7 +80,109 @@ export interface IntegrationQueueItem {
 
 export type IntegrationStatusCounts = Record<string, number>;
 
+export interface AccountOrderItemRow {
+  order_id: string;
+  product_name: string;
+  sku: string;
+  quantity: number;
+  total_kopecks: number | string;
+}
+
+export interface AccountOrderRow {
+  id: string;
+  number: string;
+  status: string;
+  payment_status: string;
+  total_kopecks: number | string;
+  delivery_method: string;
+  created_at: Date | string;
+  items: AccountOrderItemRow[];
+}
+
 export class OrderRepository {
+  async updateStatus(
+    database: DatabaseExecutor,
+    orderId: string,
+    status: string,
+    paymentStatus?: string,
+  ): Promise<boolean> {
+    const result = await database.query(
+      `UPDATE orders
+       SET status = $2,
+           payment_status = COALESCE($3, payment_status),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [orderId, status, paymentStatus ?? null],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async listForUser(
+    database: DatabaseExecutor,
+    userId: string,
+    limit = 50,
+  ): Promise<AccountOrderRow[]> {
+    const ordersResult = await database.query<Omit<AccountOrderRow, "items">>(
+      `SELECT id, number, status, payment_status, total_kopecks,
+              delivery_method, created_at
+       FROM orders
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [userId, limit],
+    );
+    if (ordersResult.rows.length === 0) return [];
+    const itemsResult = await database.query<AccountOrderItemRow>(
+      `SELECT order_id, product_name, sku, quantity, total_kopecks
+       FROM order_items
+       WHERE order_id = ANY($1::uuid[])
+       ORDER BY id`,
+      [ordersResult.rows.map((order) => order.id)],
+    );
+    const itemsByOrder = new Map<string, AccountOrderItemRow[]>();
+    for (const item of itemsResult.rows) {
+      const items = itemsByOrder.get(item.order_id) ?? [];
+      items.push(item);
+      itemsByOrder.set(item.order_id, items);
+    }
+    return ordersResult.rows.map((order) => ({
+      ...order,
+      items: itemsByOrder.get(order.id) ?? [],
+    }));
+  }
+
+  async listForAdministration(
+    database: DatabaseExecutor,
+    limit = 100,
+  ): Promise<AccountOrderRow[]> {
+    const ordersResult = await database.query<Omit<AccountOrderRow, "items">>(
+      `SELECT id, number, status, payment_status, total_kopecks,
+              delivery_method, created_at
+       FROM orders
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    if (ordersResult.rows.length === 0) return [];
+    const itemsResult = await database.query<AccountOrderItemRow>(
+      `SELECT order_id, product_name, sku, quantity, total_kopecks
+       FROM order_items
+       WHERE order_id = ANY($1::uuid[])
+       ORDER BY id`,
+      [ordersResult.rows.map((order) => order.id)],
+    );
+    const itemsByOrder = new Map<string, AccountOrderItemRow[]>();
+    for (const item of itemsResult.rows) {
+      const items = itemsByOrder.get(item.order_id) ?? [];
+      items.push(item);
+      itemsByOrder.set(item.order_id, items);
+    }
+    return ordersResult.rows.map((order) => ({
+      ...order,
+      items: itemsByOrder.get(order.id) ?? [],
+    }));
+  }
+
   async getDeliveryPriceKopecks(
     database: DatabaseExecutor,
     deliveryMethod: CreateOrderInput["delivery"]["method"],
@@ -143,14 +248,15 @@ export class OrderRepository {
     const orderNumber = `AW-${String(sequenceResult.rows[0].value).padStart(6, "0")}`;
     const orderResult = await database.query<CreatedOrderRow>(
       `INSERT INTO orders (
-         number, checkout_idempotency_key, customer_name, customer_email,
+         number, user_id, checkout_idempotency_key, customer_name, customer_email,
          customer_phone, subtotal_kopecks, discount_kopecks, delivery_kopecks,
          total_kopecks, delivery_method, delivery_address, comment,
          requires_tire_service
-       ) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11, $12)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13)
        RETURNING id, number, status, integration_status, total_kopecks, created_at`,
       [
         orderNumber,
+        order.userId ?? null,
         order.idempotencyKey,
         order.customer.name,
         order.customer.email ?? null,
@@ -165,6 +271,22 @@ export class OrderRepository {
       ],
     );
     const createdOrder = orderResult.rows[0];
+
+    for (const documentSlug of ["offer", "personal-data-consent"]) {
+      await database.query(
+        `INSERT INTO consents (
+           user_id, purpose, document_slug, document_version,
+           ip_address, user_agent, source
+         ) VALUES ($1, 'checkout', $2, '2026-07-31', $3, $4, $5)`,
+        [
+          order.userId ?? null,
+          documentSlug,
+          order.requesterAddress ?? null,
+          order.userAgent ?? null,
+          `checkout:${createdOrder.id}`,
+        ],
+      );
+    }
 
     for (const item of order.items) {
       await database.query(

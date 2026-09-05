@@ -24,12 +24,8 @@ interface StoreContextValue {
   clearCart: () => void;
   toggleFavorite: (productId: string) => void;
   toggleCompare: (productId: string) => void;
-  login: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
   authenticateUser: (profile: UserProfile) => void;
   logout: () => void;
-  saveProduct: (product: Product) => void;
-  deleteProduct: (productId: string) => void;
-  resetProducts: () => void;
 }
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -39,7 +35,6 @@ const BROWSER_STORAGE_KEYS = {
   cart: "apex.cart.v1",
   favorites: "apex.favorites.v1",
   compare: "apex.compare.v1",
-  user: "apex.user.v1",
 };
 
 function readBrowserStorage<T>(key: string, fallbackValue: T): T {
@@ -68,6 +63,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [compare, setCompare] = useState<string[]>([]);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [cartLoadedForUserId, setCartLoadedForUserId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -91,7 +87,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     );
     setCompare(readBrowserStorage(BROWSER_STORAGE_KEYS.compare, []));
     setUser(null);
-    window.localStorage.removeItem(BROWSER_STORAGE_KEYS.user);
     setHydrated(true);
 
     void fetch("/api/auth/session", {
@@ -133,11 +128,55 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       BROWSER_STORAGE_KEYS.compare,
       JSON.stringify(compare),
     );
-    localStorage.setItem(
-      BROWSER_STORAGE_KEYS.user,
-      JSON.stringify(user),
-    );
-  }, [products, cart, favorites, compare, user, hydrated, catalogIsPreview]);
+  }, [products, cart, favorites, compare, hydrated, catalogIsPreview]);
+
+  useEffect(() => {
+    if (!hydrated || !user || catalogIsPreview) {
+      setCartLoadedForUserId(null);
+      return;
+    }
+    const abortController = new AbortController();
+    void fetch("/api/v1/account/cart", {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: abortController.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Cart request failed");
+        return response.json() as Promise<{ items?: CartLine[] }>;
+      })
+      .then((result) => {
+        setCart((localItems) => {
+          const quantityByProductId = new Map<string, number>();
+          for (const item of [...(result.items ?? []), ...localItems]) {
+            quantityByProductId.set(
+              item.productId,
+              Math.max(quantityByProductId.get(item.productId) ?? 0, item.quantity),
+            );
+          }
+          return Array.from(quantityByProductId, ([productId, quantity]) => ({
+            productId,
+            quantity,
+          }));
+        });
+        setCartLoadedForUserId(user.id);
+      })
+      .catch(() => setCartLoadedForUserId(null));
+    return () => abortController.abort();
+  }, [catalogIsPreview, hydrated, user]);
+
+  useEffect(() => {
+    if (!user || cartLoadedForUserId !== user.id || catalogIsPreview) return;
+    const timeout = window.setTimeout(() => {
+      void fetch("/api/v1/account/cart", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: cart }),
+      }).catch(() => undefined);
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [cart, cartLoadedForUserId, catalogIsPreview, user]);
 
   const addToCart = useCallback((productId: string, quantity = 1) => {
     setCart((current) => {
@@ -181,29 +220,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    void email;
-    void password;
-    return {
-      ok: false,
-      message: "Вход администратора будет доступен после подключения защищённой серверной авторизации.",
-    };
-  }, []);
-
-  const saveProduct = useCallback((product: Product) => {
-    setProducts((current) => {
-      const exists = current.some((item) => item.id === product.id);
-      return exists
-        ? current.map((item) => (item.id === product.id ? product : item))
-        : [product, ...current];
-    });
-  }, []);
-
-  const deleteProduct = useCallback((productId: string) => {
-    setProducts((current) => current.filter((item) => item.id !== productId));
-    setCart((current) => current.filter((item) => item.productId !== productId));
-  }, []);
-
   const value = useMemo<StoreContextValue>(
     () => ({
       products,
@@ -217,18 +233,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       clearCart: () => setCart([]),
       toggleFavorite,
       toggleCompare,
-      login,
       authenticateUser: setUser,
       logout: () => {
         setUser(null);
+        setCartLoadedForUserId(null);
         void fetch("/api/auth/session", {
           method: "DELETE",
           credentials: "same-origin",
         }).catch(() => undefined);
       },
-      saveProduct,
-      deleteProduct,
-      resetProducts: () => setProducts(seedProducts),
     }),
     [
       products,
@@ -241,9 +254,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setCartQuantity,
       toggleFavorite,
       toggleCompare,
-      login,
-      saveProduct,
-      deleteProduct,
     ],
   );
 

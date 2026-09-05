@@ -1,7 +1,6 @@
 interface CloudflareEnv {
   ASSETS: Fetcher;
   WORKER_SELF_REFERENCE: Fetcher;
-  DB?: D1Database;
   YANDEX_METRIKA_COUNTER_ID?: string;
   OTP_CODE_PEPPER?: string;
   YANDEX_POSTBOX_ACCESS_KEY_ID?: string;
