@@ -25,6 +25,14 @@ const securityHeaders = [
   },
 ];
 
+// Preview (demo prices): every response, including non-HTML (assets, API
+// JSON), is noindex. robots.txt allows crawling on preview so robots can
+// read it.
+const previewIndexingHeaders =
+  businessConfig.deploymentStage === "production"
+    ? []
+    : [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
+
 const nextConfig: NextConfig = {
   agentRules: false,
   reactStrictMode: true,
@@ -36,7 +44,7 @@ const nextConfig: NextConfig = {
     useTypeScriptCli: true,
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [{ source: "/:path*", headers: [...securityHeaders, ...previewIndexingHeaders] }];
   },
 };
 

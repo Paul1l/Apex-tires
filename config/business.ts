@@ -40,7 +40,7 @@ const availabilityModes: AvailabilityDisplayMode[] = [
 
 export const BUSINESS_DATA_PLACEHOLDER = "[ТРЕБУЕТСЯ ЗАПОЛНИТЬ]";
 export const CONFIRMED_TWO_GIS_URL =
-  "https://2gis.ru/barnaul/firm/70000001036958402/tab/reviews?m=83.75635%2C53.376061%2F16";
+  "https://2gis.ru/barnaul/firm/70000001036958402?m=83.75635%2C53.376061%2F16";
 
 export const businessConfig = {
   deploymentStage: (
