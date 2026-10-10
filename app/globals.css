@@ -2437,8 +2437,11 @@ footer {
 .legal-hero h1,
 .legal-article > header h1 {
   margin: 0;
-  font-size: clamp(38px, 6vw, 72px);
+  /* 28px on phones: long words («Пользовательское») fit a 280px column. */
+  font-size: clamp(28px, 6vw, 72px);
   line-height: 1.05;
+  overflow-wrap: anywhere;
+  hyphens: auto;
 }
 
 .legal-hero > p:last-child,
@@ -3128,6 +3131,10 @@ footer {
   text-decoration: underline;
 }
 
+.drawer > .checkout-error {
+  margin: 14px 28px 0;
+}
+
 .drawer-summary {
   border-top: 1px solid var(--line);
   background: #fff;
@@ -3375,8 +3382,15 @@ footer {
 }
 
 .toast {
+  max-width: min(440px, calc(100% - 48px));
   font-size: 13px;
+  line-height: 1.4;
   pointer-events: none;
+}
+
+.toast.error > svg {
+  flex: none;
+  color: #f0a597;
 }
 
 .privacy-notice {

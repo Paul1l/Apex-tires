@@ -7,6 +7,7 @@ import {
   BadgeCheck,
   Car,
   Check,
+  CircleAlert,
   CircleUserRound,
   GitCompareArrows,
   Heart,
@@ -42,6 +43,7 @@ import { openCookieSettings } from "@/lib/cookie-consent";
 import { CheckoutForm } from "@/components/checkout-form";
 import { FitmentRequestForm } from "@/components/fitment-request-form";
 import { TireIllustration } from "@/components/tire-illustration";
+import { ProductPhoto } from "@/components/product-photo";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import {
   buildCatalogSearchParams,
@@ -64,7 +66,12 @@ import {
   getAvailabilityPresentation,
   hasValidDiscount,
 } from "@/lib/product-presentation";
-import { MAX_CART_LINE_QUANTITY, useStore } from "@/components/store-provider";
+import {
+  getCartLineLimit,
+  MAX_CART_LINE_QUANTITY,
+  useStore,
+  type CartChangeResult,
+} from "@/components/store-provider";
 
 const initialFilters: CatalogFilters = createDefaultCatalogFilters();
 
@@ -78,6 +85,37 @@ function scrollBehavior(): ScrollBehavior {
 
 function productName(product: Pick<Product, "brand" | "model">): string {
   return `${product.brand} ${product.model}`;
+}
+
+type ToastTone = "success" | "error";
+type Notify = (message: string, tone?: ToastTone) => void;
+
+function cartLimitText(maxQuantity: number): string {
+  if (maxQuantity === 0) return "товара нет в наличии";
+  return maxQuantity < MAX_CART_LINE_QUANTITY
+    ? `в наличии ${maxQuantity} шт.`
+    : `в одной позиции не больше ${MAX_CART_LINE_QUANTITY} шт.`;
+}
+
+/**
+ * Toast for an "add to cart" action that reflects what was actually saved:
+ * a save error, the stock or line limit, or success.
+ */
+function reportCartAddition(
+  result: CartChangeResult,
+  previousQuantity: number,
+  notify: Notify,
+  successMessage: string,
+) {
+  if (!result.ok) {
+    notify(`Корзина не сохранена. ${result.message ?? ""}`.trim(), "error");
+  } else if (result.quantity <= previousQuantity) {
+    notify(`Больше добавить нельзя: ${cartLimitText(result.maxQuantity)}`, "error");
+  } else if (result.limited) {
+    notify(`В корзине ${result.quantity} шт. — больше добавить нельзя: ${cartLimitText(result.maxQuantity)}`);
+  } else {
+    notify(successMessage);
+  }
 }
 
 function useDebouncedValue<T>(value: T, delayMilliseconds: number): T {
@@ -257,15 +295,21 @@ function SearchableVehicleSelect({
 
 function ProductArt({ product, compact = false }: { product: Product; compact?: boolean }) {
   if (product.image) {
+    // A missing or broken photo falls back to the generated art below.
     return (
-      <div className={`product-art uploaded ${compact ? "compact" : ""}`}>
-        {/* User-uploaded data URL or configured CDN URL. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={product.image} alt={`${product.brand} ${product.model}`} />
-      </div>
+      <ProductPhoto
+        src={product.image}
+        alt={`${product.brand} ${product.model}`}
+        className={`product-art uploaded ${compact ? "compact" : ""}`}
+        fallback={<GeneratedProductArt product={product} compact={compact} />}
+      />
     );
   }
+  return <GeneratedProductArt product={product} compact={compact} />;
+}
 
+/** Tire illustration or the wheel placeholder, used when there is no photo. */
+function GeneratedProductArt({ product, compact }: { product: Product; compact: boolean }) {
   if (product.kind === "tire") {
     // Compact rows (cart, favorites, compare) print the name next to the image,
     // so the picture is decorative there. Full-size art keeps a descriptive alt:
@@ -302,7 +346,7 @@ function ProductCard({
 }: {
   product: Product;
   onQuickView: (product: Product) => void;
-  notify: (message: string) => void;
+  notify: Notify;
 }) {
   const {
     addToCart,
@@ -312,7 +356,8 @@ function ProductCard({
     toggleCompare,
     cart,
   } = useStore();
-  const inCart = cart.some((line) => line.productId === product.id);
+  const quantityInCart = cart.find((line) => line.productId === product.id)?.quantity ?? 0;
+  const inCart = quantityInCart > 0;
   const favorite = favorites.includes(product.id);
   const compared = compare.includes(product.id);
   const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
@@ -396,9 +441,9 @@ function ProductCard({
           <button
             type="button"
             className={inCart ? "bag-button added" : "bag-button"}
-            onClick={() => {
-              addToCart(product.id);
-              notify(inCart ? "Количество обновлено" : "Товар добавлен в корзину");
+            onClick={async () => {
+              const result = await addToCart(product.id);
+              reportCartAddition(result, quantityInCart, notify, inCart ? "Количество обновлено" : "Товар добавлен в корзину");
             }}
             aria-label={`${inCart ? "Добавить ещё в корзину" : "Добавить в корзину"}: ${name}`}
           >
@@ -724,7 +769,7 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
 }
 
-function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => void; notify: (m: string) => void }) {
+function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => void; notify: Notify }) {
   const { cart, products, setCartQuantity, clearCart, user, cartError } = useStore();
   const [ordered, setOrdered] = useState(false);
   const [orderNumber, setOrderNumber] = useState("");
@@ -770,22 +815,25 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
         ) : (
           <>
             <ul className="drawer-lines" aria-label="Товары в корзине">
-              {lines.map(({ product, quantity }) => (
+              {lines.map(({ product, quantity }) => {
+                const limit = getCartLineLimit(product);
+                const atLimit = quantity >= limit;
+                return (
                 <li className="cart-line" key={product.id}>
                   <ProductArt product={product} compact />
                   <div className="cart-line-copy">
                     <strong>{product.brand} {product.model}</strong>
                     <span>{product.subtitle}</span>
                     <div className="quantity" role="group" aria-label={`Количество: ${productName(product)}`}>
-                      <button type="button" aria-label="Уменьшить количество" onClick={() => setCartQuantity(product.id, quantity - 1)}><Minus size={14} aria-hidden="true" /></button>
+                      <button type="button" aria-label="Уменьшить количество" onClick={() => void setCartQuantity(product.id, quantity - 1)}><Minus size={14} aria-hidden="true" /></button>
                       <b aria-live="polite">{quantity}</b>
                       <button
                         type="button"
-                        aria-label={quantity >= MAX_CART_LINE_QUANTITY ? `Увеличить количество: максимум ${MAX_CART_LINE_QUANTITY} шт.` : "Увеличить количество"}
-                        title={quantity >= MAX_CART_LINE_QUANTITY ? `Не больше ${MAX_CART_LINE_QUANTITY} шт. одной позиции` : undefined}
-                        aria-disabled={quantity >= MAX_CART_LINE_QUANTITY || undefined}
+                        aria-label={atLimit ? `Увеличить количество: ${cartLimitText(limit)}` : "Увеличить количество"}
+                        title={atLimit ? `Больше добавить нельзя: ${cartLimitText(limit)}` : undefined}
+                        aria-disabled={atLimit || undefined}
                         onClick={() => {
-                          if (quantity < MAX_CART_LINE_QUANTITY) setCartQuantity(product.id, quantity + 1);
+                          if (!atLimit) void setCartQuantity(product.id, quantity + 1);
                         }}
                       >
                         <Plus size={14} aria-hidden="true" />
@@ -794,10 +842,11 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
                   </div>
                   <div className="cart-line-price">
                     <strong>{formatPrice(product.price * quantity)}</strong>
-                    <button type="button" aria-label={`Удалить из корзины: ${productName(product)}`} onClick={() => setCartQuantity(product.id, 0)}>Удалить</button>
+                    <button type="button" aria-label={`Удалить из корзины: ${productName(product)}`} onClick={() => void setCartQuantity(product.id, 0)}>Удалить</button>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
             <div className="drawer-summary">
               <div><span>Товары</span><strong>{formatPrice(total)}</strong></div>
@@ -834,8 +883,8 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
   );
 }
 
-function QuickView({ product, onClose, notify }: { product: Product | null; onClose: () => void; notify: (m: string) => void }) {
-  const { addToCart, favorites, toggleFavorite } = useStore();
+function QuickView({ product, onClose, notify }: { product: Product | null; onClose: () => void; notify: Notify }) {
+  const { addToCart, cart, favorites, toggleFavorite } = useStore();
   const titleId = useId();
   if (!product) return null;
   const favorite = favorites.includes(product.id);
@@ -871,10 +920,11 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
             <button
               type="button"
               className="primary-button"
-              onClick={() => {
-                addToCart(product.id, 4);
-                notify("Комплект из 4 шт. добавлен в корзину");
+              onClick={async () => {
+                const previousQuantity = cart.find((line) => line.productId === product.id)?.quantity ?? 0;
                 onClose();
+                const result = await addToCart(product.id, 4);
+                reportCartAddition(result, previousQuantity, notify, "Комплект из 4 шт. добавлен в корзину");
               }}
             >
               Купить комплект <ArrowRight size={17} aria-hidden="true" />
@@ -987,8 +1037,8 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
   );
 }
 
-function CollectionDrawer({ open, onClose, mode, notify }: { open: boolean; onClose: () => void; mode: "favorites" | "compare"; notify: (message: string) => void }) {
-  const { favorites, compare, products, toggleFavorite, toggleCompare, addToCart } = useStore();
+function CollectionDrawer({ open, onClose, mode, notify }: { open: boolean; onClose: () => void; mode: "favorites" | "compare"; notify: Notify }) {
+  const { cart, favorites, compare, products, toggleFavorite, toggleCompare, addToCart } = useStore();
   const ids = mode === "favorites" ? favorites : compare;
   const items = ids.map((id) => products.find((p) => p.id === id)).filter(Boolean) as Product[];
   const titleId = useId();
@@ -1021,7 +1071,10 @@ function CollectionDrawer({ open, onClose, mode, notify }: { open: boolean; onCl
                   <b>{formatPrice(product.price)}</b>
                 </div>
                 <div className="collection-actions">
-                  <button type="button" aria-label={`Добавить в корзину: ${productName(product)}`} onClick={() => { addToCart(product.id); notify("Товар добавлен в корзину"); }}><ShoppingBag size={17} aria-hidden="true" /></button>
+                  <button type="button" aria-label={`Добавить в корзину: ${productName(product)}`} onClick={async () => {
+                    const previousQuantity = cart.find((line) => line.productId === product.id)?.quantity ?? 0;
+                    reportCartAddition(await addToCart(product.id), previousQuantity, notify, "Товар добавлен в корзину");
+                  }}><ShoppingBag size={17} aria-hidden="true" /></button>
                   <button type="button" aria-label={`${mode === "favorites" ? "Убрать из избранного" : "Убрать из сравнения"}: ${productName(product)}`} onClick={() => mode === "favorites" ? toggleFavorite(product.id) : toggleCompare(product.id)}><X size={17} aria-hidden="true" /></button>
                 </div>
               </li>
@@ -1100,7 +1153,7 @@ export function Storefront({
   const [mobileMenu, setMobileMenu] = useState(false);
   const mobileMenuButtonReference = useRef<HTMLButtonElement>(null);
   const mainNavigationReference = useRef<HTMLElement>(null);
-  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string; tone: ToastTone } | null>(null);
   const toastTimeoutReference = useRef<number | undefined>(undefined);
   const catalogFilterKey = JSON.stringify(filters);
   // The page number belongs to one set of filters: any filter change starts
@@ -1411,10 +1464,11 @@ export function Storefront({
     return () => controller.abort();
   }, [databaseCatalogEnabled,carBrand,carModel,carGeneration,selectedGenerationIsKnown]);
 
-  const notify = useCallback((message: string) => {
+  const notify = useCallback<Notify>((message, tone = "success") => {
     window.clearTimeout(toastTimeoutReference.current);
-    setToast((current) => ({ id: (current?.id ?? 0) + 1, message }));
-    toastTimeoutReference.current = window.setTimeout(() => setToast(null), 2600);
+    setToast((current) => ({ id: (current?.id ?? 0) + 1, message, tone }));
+    // Errors stay longer: they usually ask the visitor to do something.
+    toastTimeoutReference.current = window.setTimeout(() => setToast(null), tone === "error" ? 6000 : 2600);
   }, []);
 
   function scrollToCatalog() {
@@ -2121,7 +2175,11 @@ export function Storefront({
       </Overlay>
       {/* Persistent live region; stays active while a dialog is open. */}
       <div className="toast-region" role="status" aria-live="polite" data-dialog-keep-active="">
-        {toast && <div className="toast" key={toast.id}><Check size={16} aria-hidden="true" /> {toast.message}</div>}
+        {toast && (
+          <div className={toast.tone === "error" ? "toast error" : "toast"} key={toast.id}>
+            {toast.tone === "error" ? <CircleAlert size={16} aria-hidden="true" /> : <Check size={16} aria-hidden="true" />} {toast.message}
+          </div>
+        )}
       </div>
     </>
   );
