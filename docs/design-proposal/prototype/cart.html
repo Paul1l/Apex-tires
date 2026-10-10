@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Корзина — APEX WHEELS</title>
+<meta name="description" content="Корзина и оформление заказа APEX WHEELS.">
+<link rel="icon" href="../assets/logo/apex-favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Перейти к содержанию</a>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-cart" viewBox="0 0 24 24"><path d="M3 4h2.2l2.1 10.1a1.2 1.2 0 0 0 1.2 1h8.6a1.2 1.2 0 0 0 1.2-.9L20 8H6.1"/><circle cx="9.5" cy="19.5" r="1.3"/><circle cx="17" cy="19.5" r="1.3"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.3-3.6 4.2-5.3 7.5-5.3s6.2 1.7 7.5 5.3"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 19.5s-7.5-4.6-7.5-10A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.3c0 5.4-7.5 10-7.5 10z"/></symbol>
+  <symbol id="i-compare" viewBox="0 0 24 24"><path d="M6 19v-8M12 19V5M18 19v-6"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.8"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></symbol>
+  <symbol id="i-snow" viewBox="0 0 24 24"><path d="M12 2.5V21.5M3.77 7.25L20.23 16.75M3.77 16.75L20.23 7.25M12 5.5L10.16 3.66M12 5.5L13.84 3.66M6.37 8.75L3.86 9.42M6.37 8.75L5.7 6.24M6.37 15.25L5.7 17.76M6.37 15.25L3.86 14.58M12 18.5L13.84 20.34M12 18.5L10.16 20.34M17.63 15.25L20.14 14.58M17.63 15.25L18.3 17.76M17.63 8.75L18.3 6.24M17.63 8.75L20.14 9.42"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.6 3.5h2.6l1.4 4-1.9 1.3a11.4 11.4 0 0 0 6.5 6.5l1.3-1.9 4 1.4v2.6a1.6 1.6 0 0 1-1.7 1.6C11 18.5 5.5 13 4.9 5.2a1.6 1.6 0 0 1 1.7-1.7z"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.8-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 15.2 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7M10 10.5v5.5M14 10.5v5.5"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><path d="M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h1.5M4 12h1.5M4 18h1.5"/></symbol>
+</svg>
+<div class="topbar">
+  <div class="container topbar__inner">
+    <div class="topbar__group">
+      <span class="topbar__item"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg>Барнаул</span>
+      <span class="topbar__item">[адрес магазина]</span>
+    </div>
+    <div class="topbar__group topbar__group--right">
+      <a class="topbar__item" href="#">Доставка и оплата</a>
+      <a class="topbar__item" href="#">Гарантия и возврат</a>
+      <span class="topbar__item topbar__item--keep">Демо-версия: цены и наличие не являются офертой</span>
+    </div>
+  </div>
+</div>
+<header class="header">
+  <div class="container header__main">
+    <button class="header__burger" type="button" data-open-menu aria-controls="menu" aria-expanded="false" aria-label="Открыть меню"><svg class="icon icon--24" aria-hidden="true"><use href="#i-menu"/></svg></button>
+    <a class="header__logo" href="index.html"><img class="logo-full" src="../assets/logo/apex-logo.svg" alt="APEX WHEELS — на главную" width="261" height="22"><img class="logo-compact" src="../assets/logo/apex-logo-compact.svg" alt="APEX WHEELS — на главную" width="117" height="22"></a>
+    <form class="search" role="search" action="index.html" method="get" data-search-form>
+      <label class="visually-hidden" for="q">Поиск по каталогу</label>
+      <input class="search__input" id="q" name="q" type="search" autocomplete="off" placeholder="Размер, бренд или модель, например 205/55 R16">
+      <button class="search__btn" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><span>Найти</span></button>
+    </form>
+    <div class="header__contacts">
+      <a class="header__phone" href="tel:">[телефон]</a>
+      <span class="header__hours">[часы работы]</span>
+    </div>
+    <a class="header__call" href="tel:" aria-label="Позвонить: [телефон]"><svg class="icon icon--24" aria-hidden="true"><use href="#i-phone"/></svg></a>
+    <nav class="header__actions" aria-label="Покупатель">
+      <a class="hdr-action hdr-action--opt" href="#"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span class="hdr-action__label">Войти</span></a>
+      <a class="hdr-action hdr-action--opt" href="#"><svg class="icon" aria-hidden="true"><use href="#i-heart"/></svg><span class="hdr-action__label hdr-action__label--opt">Избранное</span><span class="hdr-action__count" data-fav-count data-zero="true">0</span></a>
+      <a class="hdr-action hdr-action--opt" href="#"><svg class="icon" aria-hidden="true"><use href="#i-compare"/></svg><span class="hdr-action__label hdr-action__label--opt">Сравнение</span><span class="hdr-action__count" data-cmp-count data-zero="true">0</span></a>
+      <a class="hdr-action hdr-action--cart" href="cart.html" data-cart-link><svg class="icon" aria-hidden="true"><use href="#i-cart"/></svg><span class="hdr-action__label" data-cart-sum>119 520 ₽</span><span class="hdr-action__count" data-cart-count data-zero="false">8</span><span class="visually-hidden" data-cart-sr>Корзина: 8 шт.</span></a>
+    </nav>
+  </div>
+  <nav class="nav" aria-label="Каталог">
+    <div class="container">
+      <ul class="nav__list">
+        <li><a class="nav__link" href="index.html">Шины</a></li>
+        <li><a class="nav__link" href="#">Диски</a></li>
+        <li><a class="nav__link" href="index.html#picker">Подбор по автомобилю</a></li>
+        <li><a class="nav__link" href="#">Шиномонтаж <span class="nav__note">[подтвердить]</span></a></li>
+        <li><a class="nav__link" href="#">Контакты</a></li>
+      </ul>
+    </div>
+  </nav>
+</header>
+<div class="drawer-menu" id="menu" role="dialog" aria-modal="true" aria-label="Меню">
+  <div class="drawer-menu__head">
+    <img src="../assets/logo/apex-logo-compact.svg" alt="APEX WHEELS" width="117" height="22">
+    <button class="icon-btn" type="button" data-close-menu aria-label="Закрыть меню"><svg class="icon icon--24" aria-hidden="true"><use href="#i-close"/></svg></button>
+  </div>
+  <nav class="drawer-menu__nav" aria-label="Разделы">
+      <a href="index.html">Шины</a>
+      <a href="#">Диски</a>
+      <a href="index.html#picker">Подбор по автомобилю</a>
+      <a href="#">Шиномонтаж <span class="nav__note">[подтвердить]</span></a>
+      <a href="#">Контакты</a>
+      <a href="#">Войти</a>
+      <a href="#">Избранное</a>
+      <a href="#">Сравнение</a>
+  </nav>
+  <div class="drawer-menu__info">
+    <span class="topbar__item"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg>Барнаул, [адрес магазина]</span>
+    <a class="topbar__item" href="tel:"><svg class="icon" aria-hidden="true"><use href="#i-phone"/></svg>[телефон]</a>
+    <span class="topbar__item"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>[часы работы]</span>
+    <a href="#">Доставка и оплата</a>
+    <a href="#">Гарантия и возврат</a>
+  </div>
+</div>
+<div class="scrim" data-scrim hidden></div>
+<main id="main" class="page">
+  <div class="container">
+    <nav aria-label="Навигационная цепочка">
+      <ol class="breadcrumbs"><li><a href="index.html">Главная</a></li><li aria-current="page">Корзина</li></ol>
+    </nav>
+    <div class="page-title">
+      <h1>Корзина</h1>
+      <span class="muted" data-cart-caption>2 товара, 8 шт.</span>
+    </div>
+
+    <div class="cart-layout">
+      <div>
+        <section aria-label="Товары в корзине">
+          <div class="cart-items" data-cart-items>
+            <div class="cart-items__head" aria-hidden="true"><span></span><span>Товар</span><span>Цена за 1 шт.</span><span>Количество</span><span style="text-align:right">Сумма</span></div>
+        <div class="cart-item" data-cart-item data-price="17390">
+          <div class="cart-item__img"><img src="../assets/tires/pirelli-ice-zero-fr-235-55-r18.svg" alt="Иллюстрация шины Pirelli Ice Zero FR" width="72" height="72"><span class="caption">Иллюстрация</span></div>
+          <div class="cart-item__info">
+            <p class="cart-item__name"><a href="product.html"><b>Pirelli Ice Zero FR</b></a></p>
+            <p class="small muted">235/55 R18 104H XL · зимняя, без шипов</p>
+            <p class="cart-item__sku">Арт. T-PI-IZF-2355518</p>
+            <p class="stock"><svg class="icon icon--16" aria-hidden="true"><use href="#i-check"/></svg>В наличии: 7 шт.</p>
+          </div>
+          <p class="cart-item__price">17 390 ₽ <span class="cart-item__label">за 1 шт.</span></p>
+          <div class="cart-item__qty">
+            <div class="stepper" role="group" aria-label="Количество"><button type="button" data-step="-1" aria-label="Уменьшить количество"><svg class="icon icon--16" aria-hidden="true"><use href="#i-minus"/></svg></button><input type="number" inputmode="numeric" min="1" max="99" value="4" aria-label="Количество: Pirelli Ice Zero FR"><button type="button" data-step="1" aria-label="Увеличить количество"><svg class="icon icon--16" aria-hidden="true"><use href="#i-plus"/></svg></button></div>
+            <button class="link-btn cart-item__remove" type="button" data-remove><svg class="icon icon--16" aria-hidden="true"><use href="#i-trash"/></svg>Удалить</button>
+          </div>
+          <p class="cart-item__sum" data-line-sum>69 560 ₽</p>
+        </div>
+        <div class="cart-item" data-cart-item data-price="12490">
+          <div class="cart-item__img"><img src="../assets/wheel-placeholder.svg" alt="Диск K&K КС741: изображение отсутствует" width="72" height="72"><span class="caption">Нет изображения</span></div>
+          <div class="cart-item__info">
+            <p class="cart-item__name"><a href="product.html"><b>K&K КС741</b></a></p>
+            <p class="small muted">Литой диск R17 × 7.5J, 5×114.3, ET45, DIA 67.1, алмаз чёрный</p>
+            <p class="cart-item__sku">Арт. W-KK-KS741-1775</p>
+            <p class="stock"><svg class="icon icon--16" aria-hidden="true"><use href="#i-check"/></svg>В наличии: 13 шт.</p>
+          </div>
+          <p class="cart-item__price">12 490 ₽ <span class="cart-item__label">за 1 шт.</span></p>
+          <div class="cart-item__qty">
+            <div class="stepper" role="group" aria-label="Количество"><button type="button" data-step="-1" aria-label="Уменьшить количество"><svg class="icon icon--16" aria-hidden="true"><use href="#i-minus"/></svg></button><input type="number" inputmode="numeric" min="1" max="99" value="4" aria-label="Количество: K&K КС741"><button type="button" data-step="1" aria-label="Увеличить количество"><svg class="icon icon--16" aria-hidden="true"><use href="#i-plus"/></svg></button></div>
+            <button class="link-btn cart-item__remove" type="button" data-remove><svg class="icon icon--16" aria-hidden="true"><use href="#i-trash"/></svg>Удалить</button>
+          </div>
+          <p class="cart-item__sum" data-line-sum>49 960 ₽</p>
+        </div>
+          </div>
+          <div class="cart-actions">
+            <a href="index.html">← Вернуться в каталог</a>
+            <button class="link-btn" type="button" data-clear-cart>Очистить корзину</button>
+          </div>
+        </section>
+
+        <form class="checkout" id="checkout" novalidate data-checkout>
+          <h2>Оформление заказа</h2>
+          <fieldset>
+            <legend>Покупатель</legend>
+            <div class="form-grid">
+              <div class="field">
+                <label class="field__label" for="f-name">Имя <b aria-hidden="true">*</b></label>
+                <input class="input" id="f-name" name="name" autocomplete="name" required aria-describedby="f-name-err">
+                <p class="field__error" id="f-name-err"></p>
+              </div>
+              <div class="field">
+                <label class="field__label" for="f-phone">Телефон <b aria-hidden="true">*</b></label>
+                <input class="input" id="f-phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="+7 ___ ___-__-__" required aria-describedby="f-phone-hint f-phone-err">
+                <p class="field__hint" id="f-phone-hint">Менеджер позвонит, чтобы подтвердить заказ</p>
+                <p class="field__error" id="f-phone-err"></p>
+              </div>
+              <div class="field field--wide">
+                <label class="field__label" for="f-email">Электронная почта <span class="caption">(необязательно)</span></label>
+                <input class="input" id="f-email" name="email" type="email" autocomplete="email">
+              </div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Получение</legend>
+            <div class="radio-list">
+              <label class="radio-option"><input type="radio" name="delivery" value="pickup" checked><span><span class="radio-option__title">Самовывоз</span><br><span class="radio-option__text">Барнаул, [адрес магазина], [часы работы]</span></span></label>
+              <label class="radio-option"><input type="radio" name="delivery" value="city"><span><span class="radio-option__title">Доставка по Барнаулу</span><br><span class="radio-option__text">Условия и стоимость — [подтвердить]</span></span></label>
+              <label class="radio-option"><input type="radio" name="delivery" value="tk"><span><span class="radio-option__title">Транспортной компанией</span><br><span class="radio-option__text">Отправка в другие города — [подтвердить]</span></span></label>
+            </div>
+            <div class="field address-field" data-address hidden style="margin-top:16px">
+              <label class="field__label" for="f-address">Адрес доставки <b aria-hidden="true">*</b></label>
+              <textarea class="textarea" id="f-address" name="address" rows="2" autocomplete="street-address"></textarea>
+            </div>
+            <label class="check" style="margin-top:12px"><input type="checkbox" name="mount"><span class="check__label">Нужен шиномонтаж — время и стоимость согласует менеджер [подтвердить]</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Оплата и комментарий</legend>
+            <p class="small muted" style="margin-bottom:12px">Способы оплаты: [подтвердить]. Менеджер сообщит их при подтверждении заказа.</p>
+            <div class="field">
+              <label class="field__label" for="f-comment">Комментарий к заказу</label>
+              <textarea class="textarea" id="f-comment" name="comment" rows="3"></textarea>
+            </div>
+          </fieldset>
+        </form>
+      </div>
+
+      <aside class="summary panel" aria-labelledby="summary-title">
+        <h2 id="summary-title">Ваш заказ</h2>
+        <dl class="summary__rows">
+          <div><dt>Товары, <span data-sum-count>8</span> шт.</dt><dd data-sum-goods>119 520 ₽</dd></div>
+          <div><dt>Получение</dt><dd data-sum-delivery>Самовывоз</dd></div>
+          <div><dt>Доставка</dt><dd>[подтвердить]</dd></div>
+        </dl>
+        <div class="summary__total"><span>Итого</span><b data-sum-total>119 520 ₽</b></div>
+        <p class="price-note">Демо-цены. Итоговую сумму подтверждает менеджер.</p>
+        <div class="form-alert" role="alert" data-form-alert hidden></div>
+        <label class="check"><input type="checkbox" name="consent" form="checkout" required aria-describedby="consent-err"><span class="check__label"><span>Принимаю условия <a href="#">публичной оферты</a> и даю <a href="#">согласие на обработку персональных данных</a></span></span></label>
+        <p class="field__error" id="consent-err"></p>
+        <button class="btn btn--primary btn--lg btn--block" type="submit" form="checkout">Оформить заказ</button>
+        <p class="caption">Регистрация не нужна.</p>
+      </aside>
+    </div>
+  </div>
+</main>
+<footer class="footer">
+  <div class="container">
+    <div class="footer__grid">
+      <section>
+        <h2>Каталог</h2>
+        <ul><li><a href="index.html">Шины</a></li><li><a href="#">Летние шины</a></li><li><a href="#">Зимние шины</a></li><li><a href="#">Диски</a></li><li><a href="index.html#picker">Подбор по автомобилю</a></li></ul>
+      </section>
+      <section>
+        <h2>Покупателям</h2>
+        <ul><li><a href="#">Доставка и оплата</a></li><li><a href="#">Гарантия и возврат</a></li><li><a href="#">Шиномонтаж [подтвердить]</a></li><li><a href="#">Публичная оферта</a></li></ul>
+      </section>
+      <section>
+        <h2>Компания</h2>
+        <ul><li><a href="#">Контакты</a></li><li><a href="#">Реквизиты</a></li><li><a href="#">Политика конфиденциальности</a></li><li><a href="#">Настройки cookie</a></li></ul>
+      </section>
+      <section>
+        <h2>Контакты</h2>
+        <ul class="footer__contacts"><li>Барнаул, [адрес магазина]</li><li><a href="tel:">[телефон]</a></li><li>[часы работы]</li><li>[e-mail]</li></ul>
+      </section>
+    </div>
+    <div class="footer__bottom">
+      <span>© APEX WHEELS, [год]. [Продавец, ИНН — подтвердить]</span>
+      <span>Демо-версия: цены и наличие не являются публичной офертой.</span>
+    </div>
+  </div>
+</footer>
+<div class="toast" data-toast hidden></div>
+<p class="visually-hidden" aria-live="polite" data-live></p>
+<script src="app.js"></script>
+</body>
+</html>
