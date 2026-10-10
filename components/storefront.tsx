@@ -32,6 +32,7 @@ import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { openCookieSettings } from "@/lib/cookie-consent";
 import { CheckoutForm } from "@/components/checkout-form";
 import { FitmentRequestForm } from "@/components/fitment-request-form";
+import { TireIllustration } from "@/components/tire-illustration";
 import type {
   CatalogFilters,
   Product,
@@ -244,6 +245,19 @@ function ProductArt({ product, compact = false }: { product: Product; compact?: 
     );
   }
 
+  if (product.kind === "tire") {
+    // Compact rows (cart, favorites, compare) print the name next to the image,
+    // so the picture is decorative there. Full-size art keeps a descriptive alt:
+    // in the quick view it is the main image; in the catalog card it sits in a
+    // button with its own aria-label, which already overrides the content.
+    return (
+      <div className={`product-art tire tire-illustration ${compact ? "compact" : ""}`} aria-hidden={compact || undefined}>
+        <TireIllustration product={product} decorative={compact} />
+        {!compact && <span className="tire-illustration-caption" aria-hidden="true">Иллюстрация</span>}
+      </div>
+    );
+  }
+
   return (
     <div className={`product-art ${product.kind} ${compact ? "compact" : ""}`} aria-hidden="true">
       <span className="art-shadow" />
@@ -255,7 +269,7 @@ function ProductArt({ product, compact = false }: { product: Product; compact?: 
           <b />
         </span>
       </span>
-      <span className="art-caption">{product.kind === "tire" ? "TYRE" : "WHEEL"}</span>
+      <span className="art-caption">WHEEL</span>
     </div>
   );
 }

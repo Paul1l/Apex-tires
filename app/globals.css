@@ -1344,6 +1344,83 @@ img {
   display: none;
 }
 
+.tire-illustration-image {
+  display: block;
+  width: min(100%, 230px);
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+
+.tire-illustration.compact .tire-illustration-image {
+  width: 100%;
+  padding: 2px;
+}
+
+.tire-illustration-caption {
+  position: absolute;
+  right: 10px;
+  bottom: 9px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 3px 6px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tire-illustration.compact .tire-illustration-caption {
+  display: none;
+}
+
+.product-modal-art .tire-illustration .tire-illustration-image {
+  width: min(100%, 470px);
+}
+
+.product-modal-art .tire-illustration .tire-illustration-caption {
+  right: 16px;
+  bottom: 14px;
+  font-size: 9px;
+}
+
+.tire-illustration-media {
+  position: relative;
+  width: min(100%, 440px);
+  margin: 18px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.96), rgba(243, 241, 235, 0.72) 42%, transparent 66%),
+    linear-gradient(145deg, #f7f5f0, #ebe8df);
+}
+
+.tire-illustration-media > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+
+@media (max-width: 760px) {
+  .tire-illustration-image {
+    width: min(100%, 180px);
+  }
+
+  .product-modal-art .tire-illustration .tire-illustration-image {
+    width: min(100%, 290px);
+  }
+}
+
+@media (max-width: 430px) {
+  .tire-illustration-image {
+    width: min(100%, 240px);
+  }
+}
+
 .product-copy {
   padding: 15px 15px 17px;
 }

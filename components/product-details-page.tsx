@@ -7,6 +7,7 @@ import { createApplicationServices, databaseIsConfigured } from "@/server/bootst
 import { businessConfig } from "@/config/business";
 import { formatPrice } from "@/lib/catalog-data";
 import { ProductPurchase } from "./product-purchase";
+import { TireIllustration } from "./tire-illustration";
 
 const loadProduct = cache(async (slug: string, kind: ProductKind) => {
   if (!databaseIsConfigured()) notFound();
@@ -24,6 +25,18 @@ export async function productMetadata(slug: string, kind: ProductKind): Promise<
 export async function ProductDetailsPage({slug,kind}: {slug:string;kind:ProductKind}) {
   const product=await loadProduct(slug,kind);
   return <main className="container product-details-page"><Link href={kind === "tire" ? "/shiny" : "/diski"}>← В каталог</Link>
+    {product.image ? (
+      <div className="tire-illustration-media">
+        {/* Product photo: uploaded data URL or configured CDN URL. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={product.image} alt={product.name} />
+      </div>
+    ) : product.kind === "tire" ? (
+      <div className="tire-illustration-media tire-illustration">
+        <TireIllustration product={product} />
+        <span className="tire-illustration-caption" aria-hidden="true">Иллюстрация</span>
+      </div>
+    ) : null}
     <article><p className="eyebrow">{kind === "tire" ? "Шина" : "Диск"} · {product.sku}</p><h1>{product.name}</h1><p>{product.subtitle}</p>
       <strong>{formatPrice(product.price)}</strong><p>{product.stock > product.reserved ? "В наличии" : "Нет в наличии"}</p>
       {product.description && <p>{product.description}</p>}<ProductPurchase product={product} /></article></main>;
