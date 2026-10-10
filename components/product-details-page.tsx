@@ -17,26 +17,17 @@ import {
   getProductPath,
   serializeJsonLd,
 } from "@/lib/structured-data";
+import { decodeProductRouteSlug } from "@/app/tires/route-slug";
 import { BrandWordmark } from "./brand-wordmark";
+import { ProductMedia } from "./product-media";
 import { HeaderCartLink, ProductPurchase } from "./product-purchase";
-import { TireIllustration } from "./tire-illustration";
 import styles from "./product-details-page.module.css";
-
-/**
- * Route params arrive percent-encoded ("шина-…" → "%D1%88…"), while slugs are
- * stored decoded (createProductSlug keeps Cyrillic letters).
- */
-function decodeSlug(slug: string): string | null {
-  try {
-    return decodeURIComponent(slug);
-  } catch {
-    return null;
-  }
-}
 
 const loadProduct = cache(async (slug: string, kind: ProductKind) => {
   if (!databaseIsConfigured()) notFound();
-  const decodedSlug = decodeSlug(slug);
+  // Malformed encoding, control characters (NUL breaks the SQL query) or an
+  // oversized value cannot be a stored slug: 404 without a database query.
+  const decodedSlug = decodeProductRouteSlug(slug);
   if (!decodedSlug) notFound();
   const product = await createApplicationServices().catalogService.getProductBySlug(decodedSlug);
   if (!product || product.kind !== kind) notFound();
@@ -195,43 +186,6 @@ export async function productMetadata(routeSlug: string, kind: ProductKind): Pro
   };
 }
 
-function ProductMedia({ product }: { product: ProductDetails }) {
-  if (product.image) {
-    return (
-      <div className={styles.media}>
-        {/* Product photo: configured CDN URL or a site path. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className={styles.photo} src={product.image} alt={product.name} />
-      </div>
-    );
-  }
-  if (product.kind === "tire") {
-    return (
-      <div className={styles.media}>
-        <TireIllustration product={product} className={styles.illustration} />
-        <span className={styles.mediaCaption} aria-hidden="true">Иллюстрация</span>
-      </div>
-    );
-  }
-  // Wheel without a photo: the same neutral drawing as in the catalog cards.
-  return (
-    <div className={styles.media}>
-      <div className={`product-art wheel ${styles.wheelArt}`} aria-hidden="true">
-        <span className="art-shadow" />
-        <span className="art-wheel">
-          <span className="art-rim">
-            {Array.from({ length: 8 }).map((_, index) => (
-              <i key={index} style={{ transform: `rotate(${index * 45}deg)` }} />
-            ))}
-            <b />
-          </span>
-        </span>
-      </div>
-      <span className={styles.mediaCaption} aria-hidden="true">Иллюстрация</span>
-    </div>
-  );
-}
-
 export async function ProductDetailsPage({ slug: routeSlug, kind }: { slug: string; kind: ProductKind }) {
   const { product, slug } = await loadProduct(routeSlug, kind);
   const availability = availabilityFor(product);
@@ -280,7 +234,23 @@ export async function ProductDetailsPage({ slug: routeSlug, kind }: { slug: stri
         </nav>
 
         <div className={styles.hero}>
-          <ProductMedia product={product} />
+          <ProductMedia
+            product={{
+              kind: product.kind,
+              name: product.name,
+              image: product.image,
+              brand: product.brand,
+              model: product.model,
+              season: product.season,
+              studded: product.studded,
+              runflat: product.runflat,
+              width: product.width,
+              profile: product.profile,
+              diameter: product.diameter,
+              xl: product.xl,
+              tags: product.tags,
+            }}
+          />
 
           <section className={styles.summary} aria-labelledby="product-title">
             <p className="eyebrow">{kindLabel(kind)} · {product.brand}</p>

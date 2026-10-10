@@ -1,6 +1,7 @@
 import { businessConfig } from "@/config/business";
 import { createApplicationServices, databaseIsConfigured } from "@/server/bootstrap/application-services";
-import { SITEMAP_PAGE_SIZE, SITEMAP_PRODUCTS_FROM, escapeXml, sitemapResponse, staticSitemap } from "@/server/services/sitemap-service";
+import { SITEMAP_PRODUCTS_FROM, escapeXml, sitemapResponse, staticSitemap } from "@/server/services/sitemap-service";
+import { productSitemapPageCount } from "../sitemaps/product-sitemap-pages";
 
 export const dynamic = "force-dynamic";
 export async function GET() {
@@ -10,6 +11,6 @@ export async function GET() {
     const result = await createApplicationServices().pool.query(`SELECT COUNT(*)::integer AS count ${SITEMAP_PRODUCTS_FROM}`);
     count = result.rows[0].count;
   }
-  const paths = ["static.xml", ...Array.from({length: Math.ceil(count/SITEMAP_PAGE_SIZE)}, (_,page) => `products-${page}.xml`)];
+  const paths = ["static.xml", ...Array.from({length: productSitemapPageCount(count)}, (_,page) => `products-${page}.xml`)];
   return sitemapResponse(`<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${paths.map((path) => `<sitemap><loc>${escapeXml(`${businessConfig.siteUrl}/sitemaps/${path}`)}</loc></sitemap>`).join("")}</sitemapindex>`);
 }
