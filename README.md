@@ -75,7 +75,6 @@ production-БД в репозитории нет.
 - `docs/AUTHENTICATION.md` — email-коды, защита и подключение Postbox;
 - `docs/VEHICLE_CATALOG.md` — откуда берутся автомобили и применяемость;
 - `docs/SITE_AUDIT.md` — аудит безопасности, SEO, доступности, производительности и UX (октябрь 2026), статусы исправлений и вопросы владельцу;
-- `docs/design-proposal/README.md` — предложение по дизайну «строгий каталог» и статический прототип (`docs/design-proposal/prototype/index.html`), ждёт согласования;
 - `docs/TEAM_WORKLOG.md` — реестр задач и решений по аудиту;
 - `docs/1C_REST_INTEGRATION.md` — архитектура и контракт подключения 1С;
 - `docs/LEGAL_AND_ANALYTICS.md` — реквизиты, согласия и Метрика;
