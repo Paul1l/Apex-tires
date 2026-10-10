@@ -97,10 +97,14 @@ services:
     networks: [backend, frontend]
 
   nginx:
-    image: nginx:1.27-alpine
+    # Stable branch; patch releases arrive with `docker compose pull nginx`.
+    image: nginx:1.30-alpine
     restart: unless-stopped
     environment:
       SITE_HOST: ${SITE_HOST}
+      # Optional 1C address allowlist (docs/VDS_DEPLOYMENT.md). Keep it defined,
+      # even empty: the nginx template refers to it.
+      ONEC_ALLOWED_IPS: ${ONEC_ALLOWED_IPS:-}
     ports:
       - "80:80"
       - "443:443"

@@ -34,11 +34,23 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 ```bash
 git pull --ff-only
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml build app
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml pull nginx
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm app pnpm db:migrate
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm --no-deps nginx nginx -t
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d app nginx
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml restart nginx
 ```
 
 Сначала создаётся резервная копия БД. После выкладки проверяются `/api/health`, каталог, вход, создание тестового заказа и журналы контейнеров.
+
+`pull nginx` подтягивает исправления стабильной ветки nginx (тег `1.30-alpine`).
+Шаблон `deploy/nginx/templates/default.conf.template` подставляется в конфигурацию
+только при старте контейнера, а `up -d` не перезапускает nginx, если изменился
+лишь шаблон, — поэтому после `git pull` нужен `restart nginx`. Команда
+`run --rm --no-deps nginx nginx -t` заранее проверяет новый шаблон с текущими
+переменными и сертификатом, не трогая работающий nginx (контейнер `app` должен
+быть запущен: имя `app` разрешается при проверке). Если проверка не прошла,
+`restart` не выполнять.
 
 ## Проверка конфигурации при старте
 
@@ -78,19 +90,45 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 Пример cron внутри административного контура:
 
 ```cron
-30 2 * * * docker compose --env-file /opt/apex/.env.production -f /opt/apex/deploy/docker-compose.production.yml exec -T postgres /scripts/backup-postgres.sh
+30 2 * * * docker compose --env-file /opt/apex/.env.production -f /opt/apex/deploy/docker-compose.production.yml exec -T postgres sh /scripts/backup-postgres.sh
 ```
 
 Скрипт уже смонтирован в контейнер PostgreSQL только для чтения. Пароли не указываются прямо в crontab.
+Скрипт запускается через `sh`: в Git он хранится без права на исполнение, и
+прямой вызов `/scripts/backup-postgres.sh` завершился бы ошибкой `permission denied`.
 
 ## Фоновые уведомления
 
 Заказы и заявки атомарно создают записи в `notification_outbox`. Каждую минуту cron вызывает защищённый `POST /api/internal/jobs/notifications` с заголовком `X-Job-Key`. Значение заголовка берётся из `INTERNAL_JOB_SECRET`; его нельзя помещать в команду, попадающую в общий журнал или историю shell. Если Postbox временно недоступен, уведомление остаётся в очереди и получает отложенную повторную попытку.
 
+Задания вызываются только изнутри контура: nginx отвечает `403` на любой
+запрос к `/api/internal/` извне. Cron на хосте запускает
+`deploy/scripts/run-internal-job.sh`; скрипт выполняет запрос внутри
+контейнера `app` (`docker compose exec -T app node …` к
+`http://127.0.0.1:3000`), а ключ читает из `INTERNAL_JOB_SECRET` в окружении
+контейнера — секрета нет ни в crontab, ни в аргументах команды:
+
+```cron
+* * * * * flock -n /run/lock/apex-job-notifications.lock sh /opt/apex/deploy/scripts/run-internal-job.sh notifications
+* * * * * flock -n /run/lock/apex-job-reservations.lock sh /opt/apex/deploy/scripts/run-internal-job.sh reservations
+```
+
+`flock -n` не даёт запускам накладываться, если задание выполняется дольше
+минуты. Аргумент — имя задания из `/api/internal/jobs/<имя>` (допустимы только
+`a-z`, `0-9` и `-`), так же вызываются и разовые задания. Скрипт ищет
+`.env.production` в корне репозитория (`/opt/apex`; другой путь — переменная
+`APEX_ENV_FILE`). При успехе он ничего не выводит; при
+ошибке (код HTTP не 2xx или `"ok": false`, например часть писем не ушла)
+печатает статус и укороченный ответ (только счётчики) и завершается с кодом 1 —
+cron пришлёт это письмом, если для crontab настроен `MAILTO`. Вызовы через
+публичный адрес (`curl https://<домен>/api/internal/...`) больше не работают:
+их нужно заменить на строки выше.
+
 ## Освобождение резервов
 
 Отдельное задание вызывает защищённый `POST /api/internal/jobs/reservations`
-с `X-Job-Key`, тем же способом передачи секрета, что и очередь уведомлений.
+с `X-Job-Key`, тем же способом передачи секрета, что и очередь уведомлений
+(вторая строка crontab в разделе выше).
 Рекомендуемая начальная частота — раз в минуту, но окончательно её выбирает
 владелец. Один вызов обрабатывает до 100 заказов; при большом backlog нужны
 дополнительные ограниченные вызовы и мониторинг. Повторный вызов безопасен.
@@ -129,6 +167,15 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 нужно добавить `set_real_ip_from` с диапазонами Cloudflare и
 `real_ip_header CF-Connecting-IP`, иначе `$remote_addr` будет адресом
 Cloudflare.
+
+IPv6: сеть Docker в `docker-compose.production.yml` без IPv6. Если у VDS есть
+IPv6 и для домена опубликована AAAA-запись, IPv6-соединения к портам 80/443
+принимает `docker-proxy` и передаёт их в контейнер nginx уже от адреса шлюза
+Docker-сети (`172.x.0.1`): все IPv6-посетители попадут в одну корзину лимитов
+по IP, а allowlist 1С по IPv6 не сработает. Пока IPv6 для сети Docker не
+включён и не проверен, AAAA-запись не публиковать. Признак проблемы — адреса
+`172.x.0.1` в `docker compose ... logs nginx`. Адрес шлюза нельзя добавлять в
+allowlist и разрешать для `/api/internal/`: через него проходят все IPv6-клиенты.
 
 ### Лимиты
 
@@ -176,6 +223,71 @@ Cloudflare.
 `script-src`/`img-src`: полная политика с nonce для Next.js и Яндекс Метрики —
 отдельная задача. Запрет встраивания во фреймы отключает отображение карты
 кликов Метрики поверх сайта; сбор данных не затрагивается.
+
+Собственные ответы nginx (400, 403, 413, 414, 502) несут HSTS, `nosniff` и
+`Referrer-Policy` (`add_header ... always` на уровне `server`);
+`X-Frame-Options`, CSP и `Permissions-Policy` есть только в ответах
+приложения. `add_header` наследуется в `location` (и в блок `if`), только если
+там нет ни одного своего `add_header`. Поэтому в шаблоне `location` их не
+содержат; если понадобится добавить заголовок в отдельный `location`, в нём
+нужно повторить все три строки уровня `server`.
+
+## Nginx: правила перед приложением
+
+Шаблон `deploy/nginx/templates/default.conf.template`, порт 443.
+
+**Битое %-кодирование пути — 400.** Если `%XX` в пути не складываются в
+корректный UTF-8 (`/legal/%C0%AF`, `/tires/%E0%A4`), роутер Next.js падает с
+500 ещё до кода приложения. Nginx отвечает на такие пути `400 Bad Request` и не
+проксирует их; синтаксически неверные `%ZZ`, `%A` в конце и `%00` nginx
+отклоняет с тем же кодом сам. Выбран 400, а не 404: запрос некорректен
+синтаксически, и все варианты битого кодирования получают один код; для
+поисковых систем 400 и 404 равнозначны. Строка запроса (`?q=%ZZ`) не
+проверяется: Next.js разбирает её без ошибки. Кириллические slug, `+`, `%2F`,
+`%25` проходят в приложение как раньше. Проверка — одно регулярное выражение
+с притяжательными квантификаторами (без катастрофических возвратов); URI
+длиннее 8 КБ nginx отклоняет кодом 414 ещё до неё.
+
+**Сжатие.** Ответы сжимает nginx (gzip, уровень 5): HTML, CSS, JS, JSON, XML,
+SVG, RSC (`text/x-component`), текст. Уже сжатые форматы (AVIF, WebP, JPEG,
+PNG, WOFF2) не сжимаются. Приложению заголовок `Accept-Encoding` не
+передаётся, поэтому `next start` не тратит процессор на сжатие и двойного
+сжатия нет. Brotli в образе `nginx:alpine` без стороннего модуля недоступен.
+ETag сжатых ответов nginx помечает слабым (`W/"..."`), повторная проверка
+(`304`) работает.
+
+**Фоновые задания.** `/api/internal/` доступен только с loopback контейнера
+nginx, извне — `403`. Задания запускаются внутри контейнера `app` (см.
+«Фоновые уведомления»).
+
+**Обмен с 1С: необязательный allowlist адресов.** По умолчанию
+`/api/integrations/1c/` защищён только ключом `INTEGRATION_API_KEY`. Чтобы
+дополнительно ограничить адреса, в `.env.production` задать:
+
+```dotenv
+ONEC_ALLOWED_IPS=203.0.113.10,203.0.113.11
+```
+
+Точные адреса через запятую или пробел, в той форме, в какой nginx пишет их в
+журнал (IPv6 — в сокращённой записи). Диапазоны CIDR не поддерживаются: такая
+запись ни с чем не совпадёт, и 1С получит `403`. С другого адреса nginx отвечает
+`403` до приложения; пустое значение — проверка выключена. Применить:
+`docker compose ... run --rm --no-deps nginx nginx -t`, затем
+`docker compose ... up -d nginx` (изменилась переменная — контейнер
+пересоздаётся) и пробный обмен с 1С. Адрес, с которого реально приходит 1С,
+виден в `docker compose ... logs nginx`. Символы `"`, `$` и `\` в значении
+ломают конфигурацию: nginx не запустится, проверка `nginx -t` это покажет.
+
+**Версии образов.** `nginx:1.30-alpine` — текущая стабильная ветка (1.30.5 на
+октябрь 2026); прежний `nginx:1.27-alpine` не обновлялся с апреля 2025 года и
+не содержит исправлений уязвимостей 1.29–1.30 (в том числе в модуле rewrite и
+в `map` с регулярными выражениями). Патчи стабильной ветки подтягиваются
+`docker compose ... pull nginx`; при выходе следующей стабильной ветки (чётный
+минорный номер) тег меняется вручную после проверки `nginx -t`. Предупреждение
+`the "listen ... http2" directive is deprecated` в журнале nginx безопасно.
+`postgres:17-bookworm` актуален (17.x, обновляется); переход на `17-trixie`
+меняет glibc и требует переиндексации текстовых индексов, переход на
+PostgreSQL 18 — отдельная миграция с резервной копией.
 
 ## Действия, требующие доступа заказчика
 

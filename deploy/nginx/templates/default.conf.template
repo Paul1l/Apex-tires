@@ -1,5 +1,35 @@
 server_tokens off;
 
+# Paths whose %-encoding does not decode to valid UTF-8 (/legal/%C0%AF,
+# /tires/%E0%A4) make the Next.js router throw a DecodeError before any
+# application code runs: 500 without the application's headers (QA-05,
+# QA-16). The path of the raw request URI passes only if every %XX sequence
+# is ASCII or a well-formed UTF-8 sequence (RFC 3629: no overlong forms,
+# surrogates or code points above U+10FFFF). Not checked: unencoded bytes
+# above 0x7F (the Node.js HTTP parser itself answers 400) and the query string
+# after "?" (Next.js parses broken escapes there without errors).
+# Syntactically broken escapes (%ZZ, a trailing %A, %00) never get here:
+# nginx itself answers 400 while parsing the request line.
+# Possessive quantifiers (++, *+) rule out catastrophic backtracking.
+map $request_uri $apex_bad_path_encoding {
+  default 1;
+  "~*^(?:[^%?]++|%[0-7][0-9a-f]|%c[2-9a-f]%[89ab][0-9a-f]|%d[0-9a-f]%[89ab][0-9a-f]|%e0%[ab][0-9a-f]%[89ab][0-9a-f]|%e[1-9a-cef]%[89ab][0-9a-f]%[89ab][0-9a-f]|%ed%[89][0-9a-f]%[89ab][0-9a-f]|%f0%[9ab][0-9a-f](?:%[89ab][0-9a-f]){2}|%f[1-3](?:%[89ab][0-9a-f]){3}|%f4%8[0-9a-f](?:%[89ab][0-9a-f]){2})*+(?:[?].*)?$" 0;
+}
+
+# Optional allowlist for the 1C exchange (/api/integrations/1c/), SEC-17.
+# ONEC_ALLOWED_IPS (environment of the nginx container, substituted at start)
+# lists exact client addresses separated by commas or spaces, written the way
+# $remote_addr shows them (IPv6 in compressed form). Empty: no address check,
+# access is by the API key only. A non-empty list without the client's
+# address gives 403 before the request reaches the application. The list is
+# compared as text (backreference \1): CIDR ranges are not supported and
+# never match.
+map "$remote_addr|${ONEC_ALLOWED_IPS}" $apex_onec_ip_denied {
+  "~^[^|]*\|[\s,]*$" 0;
+  "~*^([^|]+)\|(?:.*[\s,])?\1(?:[\s,].*)?$" 0;
+  default 1;
+}
+
 server {
   listen 80;
   server_name ${SITE_HOST};
@@ -24,10 +54,13 @@ server {
 
   # HSTS is set only here: the application does not know about TLS.
   # nosniff and Referrer-Policy are also set here so that nginx's own responses
-  # (413, 502, redirects) carry them; the application's copies are hidden to
-  # avoid duplicate headers. X-Frame-Options, Content-Security-Policy and
-  # Permissions-Policy come from the application (next.config.ts headers()),
-  # so a future per-request CSP nonce is not overridden by nginx.
+  # (400, 403, 413, 502, redirects) carry them; the application's copies are
+  # hidden to avoid duplicate headers. X-Frame-Options, Content-Security-Policy
+  # and Permissions-Policy come from the application (next.config.ts
+  # headers()), so a future per-request CSP nonce is not overridden by nginx.
+  # A location (or an "if" block) inherits these add_header lines only if it
+  # has no add_header of its own: do not add one below without repeating all
+  # three there, or its responses lose them.
   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
   add_header X-Content-Type-Options nosniff always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;
@@ -36,33 +69,72 @@ server {
 
   client_max_body_size 6m;
 
+  # 400, not 404: the request target itself is malformed, and it is the code
+  # nginx already returns for %ZZ or a truncated escape, so every broken
+  # %-encoding gets one answer. Search engines treat both codes the same way.
+  if ($apex_bad_path_encoding) {
+    return 400;
+  }
+
+  # Compression (PERF-06) is done here, not in next start: Accept-Encoding is
+  # not passed to the application (see below), so it never compresses and a
+  # response is never compressed twice. text/html is always included. Formats
+  # that are already compressed (avif, webp, jpeg, png, woff2) are not listed.
+  # gzip_min_length applies only to responses with Content-Length.
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 5;
+  gzip_min_length 1024;
+  gzip_types text/css text/plain text/xml text/javascript text/x-component
+             application/javascript application/json application/manifest+json
+             application/xml application/rss+xml image/svg+xml text/markdown;
+
+  # Proxy settings shared by every location below: none of them sets its own
+  # proxy_set_header, so all of these are inherited.
   # Client address for the application (TRUSTED_PROXY=nginx reads X-Real-IP).
   # Client-supplied X-Forwarded-For and CF-Connecting-IP are replaced/removed,
   # so they cannot be used to spoof the address.
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $remote_addr;
+  proxy_set_header CF-Connecting-IP "";
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_set_header Accept-Encoding "";
+  proxy_connect_timeout 5s;
+  proxy_read_timeout 60s;
+
+  # Background jobs (SEC-17). cron calls them inside the app container
+  # (deploy/scripts/run-internal-job.sh), so through nginx they are reachable
+  # only from its own loopback. Private ranges (172.16.0.0/12 and so on) are
+  # deliberately not allowed: for IPv6 clients of a published port docker-proxy
+  # substitutes the Docker network gateway address, which is private.
+  location ^~ /api/internal/ {
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    proxy_pass http://app:3000;
+  }
+
+  # 1C exchange: API key in the application plus the optional address
+  # allowlist above. "^~" keeps future regex locations from taking over.
+  location ^~ /api/integrations/1c/ {
+    if ($apex_onec_ip_denied) {
+      return 403;
+    }
+    proxy_pass http://app:3000;
+  }
+
   location /api/admin/imports/ {
     client_max_body_size 200m;
     proxy_request_buffering off;
-    proxy_pass http://app:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $remote_addr;
-    proxy_set_header CF-Connecting-IP "";
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_connect_timeout 5s;
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
+    proxy_pass http://app:3000;
   }
 
   location / {
     proxy_pass http://app:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $remote_addr;
-    proxy_set_header CF-Connecting-IP "";
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_connect_timeout 5s;
-    proxy_read_timeout 60s;
   }
 }
