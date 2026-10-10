@@ -43,7 +43,7 @@ interface StoreContextValue {
   toggleFavorite: (productId: string) => void;
   toggleCompare: (productId: string) => void;
   authenticateUser: (profile: UserProfile) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -538,13 +538,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       toggleFavorite,
       toggleCompare,
       authenticateUser: setUser,
-      logout: () => {
-        setUser(null);
+      logout: async () => {
+        // Stop syncing the account cart, end the session first, and only then
+        // switch to the guest: otherwise the guest cart request could still
+        // carry the session cookie and show the account cart to the next
+        // person at this computer.
         setCartLoadedForOwner(null);
-        void fetch("/api/auth/session", {
+        await fetch("/api/auth/session", {
           method: "DELETE",
           credentials: "same-origin",
         }).catch(() => undefined);
+        // The account cart stays on the server; nothing of it moves to the guest.
+        savedCartRef.current = [];
+        savedRevisionRef.current = changeRevisionRef.current;
+        settleSaveWaiters(changeRevisionRef.current, false);
+        commitCart([]);
+        setUser(null);
       },
     }),
     [
@@ -561,6 +570,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       toggleFavorite,
       toggleCompare,
       mergeCatalogProducts,
+      commitCart,
+      settleSaveWaiters,
     ],
   );
 
