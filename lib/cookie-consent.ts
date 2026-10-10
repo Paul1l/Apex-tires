@@ -83,3 +83,45 @@ export function saveCookieConsentPreferences(
 export function openCookieSettings() {
   window.dispatchEvent(new Event(OPEN_COOKIE_SETTINGS_EVENT));
 }
+
+/** Session flag: show "analytics disabled" after the reload that stops Metrika. */
+export const ANALYTICS_REVOKED_NOTICE_KEY = "apex.analytics-revoked-notice";
+
+/**
+ * Deletes what Yandex Metrika keeps on this site: first-party `_ym*` cookies
+ * (set on the current host or one of its parent domains) and `_ym*` keys in
+ * localStorage / sessionStorage. Cookies of yandex.ru itself (e.g. yandexuid)
+ * belong to another site and can only be removed in the browser settings.
+ * Returns the names of the cookies that were found.
+ */
+export function clearYandexMetrikaStorage(): string[] {
+  const cookieNames = document.cookie
+    .split(";")
+    .map((cookie) => cookie.split("=")[0]?.trim() ?? "")
+    .filter((name) => name.startsWith("_ym"));
+
+  const hostnameParts = window.location.hostname.split(".");
+  const domains: Array<string | null> = [null];
+  for (let index = 0; index < hostnameParts.length - 1; index += 1) {
+    const domain = hostnameParts.slice(index).join(".");
+    domains.push(domain, `.${domain}`);
+  }
+  for (const name of cookieNames) {
+    for (const domain of domains) {
+      document.cookie =
+        `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/` +
+        (domain ? `; domain=${domain}` : "");
+    }
+  }
+
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      for (const key of Object.keys(storage)) {
+        if (key.startsWith("_ym")) storage.removeItem(key);
+      }
+    } catch {
+      // Storage can be unavailable (private mode); cookies are already gone.
+    }
+  }
+  return cookieNames;
+}

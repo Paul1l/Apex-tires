@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   ArrowRight,
   BadgeCheck,
@@ -15,14 +16,22 @@ import {
   PackageCheck,
   Phone,
   Plus,
+  RotateCw,
   Search,
   ShoppingBag,
   SlidersHorizontal,
-  Sparkles,
   Star,
   X,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   businessConfig,
   normalizeTelephoneHref,
@@ -33,6 +42,15 @@ import { openCookieSettings } from "@/lib/cookie-consent";
 import { CheckoutForm } from "@/components/checkout-form";
 import { FitmentRequestForm } from "@/components/fitment-request-form";
 import { TireIllustration } from "@/components/tire-illustration";
+import { useDialogFocus } from "@/components/use-dialog-focus";
+import {
+  buildCatalogSearchParams,
+  CATALOG_MAX_PRICE_FILTER,
+  createDefaultCatalogFilters,
+  EMPTY_CATALOG_FACETS,
+  type CatalogFacets,
+  type InitialCatalog,
+} from "@/lib/api/catalog-query";
 import type {
   CatalogFilters,
   Product,
@@ -46,27 +64,30 @@ import {
   getAvailabilityPresentation,
   hasValidDiscount,
 } from "@/lib/product-presentation";
-import { useStore } from "@/components/store-provider";
+import { MAX_CART_LINE_QUANTITY, useStore } from "@/components/store-provider";
 
-const initialFilters: CatalogFilters = {
-  kind: "all",
-  seasons: [],
-  brands: [],
-  width: "",
-  profile: "",
-  diameter: "",
-  minPrice: 0,
-  maxPrice: 60000,
-  inStock: businessConfig.catalog.dataMode === "database",
-  studded: false,
-  runflat: false,
-  carMake: "",
-  carModel: "",
-  carYear: "",
-  carGeneration: "",
-  query: "",
-  sort: "popular",
-};
+const initialFilters: CatalogFilters = createDefaultCatalogFilters();
+
+/** Smooth scrolling unless the visitor asked the system to reduce motion. */
+function scrollBehavior(): ScrollBehavior {
+  return typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? "auto"
+    : "smooth";
+}
+
+function productName(product: Pick<Product, "brand" | "model">): string {
+  return `${product.brand} ${product.model}`;
+}
+
+function useDebouncedValue<T>(value: T, delayMilliseconds: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delayMilliseconds);
+    return () => window.clearTimeout(timeoutId);
+  }, [value, delayMilliseconds]);
+  return debouncedValue;
+}
 
 interface SearchableVehicleOption {
   id: string;
@@ -302,6 +323,11 @@ function ProductCard({
   );
   const showDiscount = !catalogIsPreview && hasValidDiscount(product);
 
+  const name = productName(product);
+  const productPath = product.slug
+    ? `/${product.kind === "tire" ? "tires" : "wheels"}/${encodeURIComponent(product.slug)}`
+    : null;
+
   return (
     <article className="product-card">
       <div className="product-card-top">
@@ -313,44 +339,53 @@ function ProductCard({
         </div>
         <div className="product-actions">
           <button
+            type="button"
             className={compared ? "active" : ""}
-            aria-label="Добавить к сравнению"
+            aria-label={`Сравнить: ${name}`}
+            aria-pressed={compared}
             onClick={() => {
               toggleCompare(product.id);
               notify(compared ? "Убрано из сравнения" : "Добавлено к сравнению");
             }}
           >
-            <GitCompareArrows size={17} />
+            <GitCompareArrows size={17} aria-hidden="true" />
           </button>
           <button
+            type="button"
             className={favorite ? "active" : ""}
-            aria-label="Добавить в избранное"
-            onClick={() => toggleFavorite(product.id)}
+            aria-label={`В избранное: ${name}`}
+            aria-pressed={favorite}
+            onClick={() => {
+              toggleFavorite(product.id);
+              notify(favorite ? "Убрано из избранного" : "Добавлено в избранное");
+            }}
           >
-            <Heart size={17} fill={favorite ? "currentColor" : "none"} />
+            <Heart size={17} fill={favorite ? "currentColor" : "none"} aria-hidden="true" />
           </button>
         </div>
       </div>
-      <button className="product-visual-button" onClick={() => onQuickView(product)} aria-label="Быстрый просмотр">
+      <button type="button" className="product-visual-button" onClick={() => onQuickView(product)} aria-label={`Быстрый просмотр: ${name}`}>
         <ProductArt product={product} />
       </button>
       <div className="product-copy">
         <div className="product-meta">
           <span>{product.kind === "tire" ? seasonLabels[product.season] : product.color}</span>
           {businessConfig.catalog.ratingsEnabled && product.rating && (
-            <span className="rating"><Star size={13} fill="currentColor" /> {product.rating}</span>
+            <span className="rating"><Star size={13} fill="currentColor" aria-hidden="true" /> {product.rating}</span>
           )}
         </div>
-        {product.slug && !catalogIsPreview ? (
-          <Link className="product-title" href={`/${product.kind === "tire" ? "tires" : "wheels"}/${product.slug}`}>
-            <strong>{product.brand}</strong> {product.model}
-          </Link>
-        ) : (
-          <button className="product-title" onClick={() => onQuickView(product)}><strong>{product.brand}</strong> {product.model}</button>
-        )}
+        <h3 className="product-card-heading">
+          {productPath && !catalogIsPreview ? (
+            <Link className="product-title" href={productPath}>
+              <strong>{product.brand}</strong> {product.model}
+            </Link>
+          ) : (
+            <button type="button" className="product-title" onClick={() => onQuickView(product)}><strong>{product.brand}</strong> {product.model}</button>
+          )}
+        </h3>
         <p className="product-size">{product.subtitle}</p>
         <div className="stock-line">
-          <span className={availability.available ? "stock-dot" : "stock-dot empty"} />
+          <span className={availability.available ? "stock-dot" : "stock-dot empty"} aria-hidden="true" />
           {availability.label}
         </div>
         <div className="product-buy-row">
@@ -359,14 +394,15 @@ function ProductCard({
             {showDiscount && <del>{formatPrice(product.oldPrice)}</del>}
           </div>
           <button
+            type="button"
             className={inCart ? "bag-button added" : "bag-button"}
             onClick={() => {
               addToCart(product.id);
               notify(inCart ? "Количество обновлено" : "Товар добавлен в корзину");
             }}
-            aria-label="Добавить в корзину"
+            aria-label={`${inCart ? "Добавить ещё в корзину" : "Добавить в корзину"}: ${name}`}
           >
-            {inCart ? <Check size={19} /> : <ShoppingBag size={19} />}
+            {inCart ? <Check size={19} aria-hidden="true" /> : <ShoppingBag size={19} aria-hidden="true" />}
           </button>
         </div>
         {catalogIsPreview && <p className="split-pay">Демонстрационная цена</p>}
@@ -378,6 +414,25 @@ function ProductCard({
   );
 }
 
+function ProductCardSkeleton() {
+  return (
+    <div className="product-card product-card-skeleton" aria-hidden="true">
+      <div className="skeleton-art" />
+      <div className="product-copy">
+        <span className="skeleton-line short" />
+        <span className="skeleton-line" />
+        <span className="skeleton-line medium" />
+        <span className="skeleton-line price" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Backdrop for modal dialogs and drawers. The child panel carries
+ * role="dialog", aria-modal and its accessible name; this component handles
+ * focus (see useDialogFocus), Escape, clicks on the backdrop and scroll lock.
+ */
 function Overlay({
   open,
   onClose,
@@ -389,20 +444,20 @@ function Overlay({
   children: React.ReactNode;
   className?: string;
 }) {
+  const overlayReference = useRef<HTMLDivElement>(null);
+  useDialogFocus(open, overlayReference, onClose);
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
     document.body.classList.add("no-scroll");
     return () => {
-      document.removeEventListener("keydown", onKey);
       document.body.classList.remove("no-scroll");
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return (
-    <div className={`overlay ${className}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div ref={overlayReference} className={`overlay ${className}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       {children}
     </div>
   );
@@ -422,6 +477,7 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [resendCountdown, setResendCountdown] = useState(0);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const titleId = useId();
 
   useEffect(() => {
     if (resendCountdown <= 0) return;
@@ -544,8 +600,8 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 
   return (
     <Overlay open={open} onClose={onClose} className="modal-overlay">
-      <section className="modal auth-modal">
-        <button className="modal-close" onClick={onClose} aria-label="Закрыть"><X /></button>
+      <section className="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Закрыть окно входа"><X aria-hidden="true" /></button>
         <div className="auth-brand">
           <span className="logo-mark small"><i /><i /><i /></span>
           {businessConfig.brandName}
@@ -557,7 +613,7 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
               ? "С возвращением"
               : "Новый аккаунт"}
         </p>
-        <h2>
+        <h2 id={titleId}>
           {step === "code"
             ? "Введите код из письма"
             : mode === "login"
@@ -570,20 +626,21 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             : "Без пароля: отправим одноразовый 6-значный код на вашу почту."}
         </p>
         <div className="auth-tabs">
-          <button className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Вход</button>
-          <button className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>Регистрация</button>
+          <button type="button" className={mode === "login" ? "active" : ""} aria-pressed={mode === "login"} onClick={() => changeMode("login")}>Вход</button>
+          <button type="button" className={mode === "register" ? "active" : ""} aria-pressed={mode === "register"} onClick={() => changeMode("register")}>Регистрация</button>
         </div>
+        <p className="sr-only" role="status" aria-live="polite">{message}</p>
         {step === "email" ? (
           <form onSubmit={submitEmail} className="stack-form">
             {mode === "register" && (
               <label>
                 <span>Имя</span>
-                <input name="name" required minLength={2} maxLength={80} placeholder="Алексей" autoComplete="name" />
+                <input name="name" required minLength={2} maxLength={80} placeholder="Алексей" autoComplete="name" data-autofocus />
               </label>
             )}
             <label>
               <span>Электронная почта</span>
-              <input name="email" type="email" required maxLength={254} placeholder="name@example.ru" autoComplete="email" />
+              <input name="email" type="email" required maxLength={254} placeholder="name@example.ru" autoComplete="email" data-autofocus={mode === "register" ? undefined : true} />
               <small>Адреса @gmail.com и @googlemail.com не поддерживаются.</small>
             </label>
             {mode === "register" && (
@@ -671,10 +728,12 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
   const { cart, products, setCartQuantity, clearCart, user, cartError } = useStore();
   const [ordered, setOrdered] = useState(false);
   const [orderNumber, setOrderNumber] = useState("");
+  const titleId = useId();
   const lines = cart
     .map((line) => ({ ...line, product: products.find((item) => item.id === line.productId) }))
     .filter((line): line is typeof line & { product: Product } => Boolean(line.product));
   const total = lines.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
+  const itemCount = lines.reduce((sum, line) => sum + line.quantity, 0);
 
   useEffect(() => {
     if (!open) {
@@ -685,51 +744,61 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
 
   return (
     <Overlay open={open} onClose={onClose} className="drawer-overlay">
-      <aside className="drawer">
+      <section className="drawer" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="drawer-head">
           <div>
             <p className="eyebrow">Ваш заказ</p>
-            <h2>Корзина <span>{lines.length}</span></h2>
+            <h2 id={titleId}>Корзина <span>{itemCount}</span></h2>
           </div>
-          <button className="icon-button" onClick={onClose}><X /></button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Закрыть корзину"><X aria-hidden="true" /></button>
         </div>
         {cartError && <p className="checkout-error" role="alert">{cartError}</p>}
         {ordered ? (
           <div className="success-state">
-            <span><Check size={30} /></span>
+            <span aria-hidden="true"><Check size={30} /></span>
             <h3>Заказ принят</h3>
             <p>{orderNumber ? `Номер ${orderNumber}. ` : ""}Менеджер проверит совместимость и свяжется с вами.</p>
             <button className="primary-button" onClick={onClose}>Вернуться в каталог</button>
           </div>
         ) : lines.length === 0 ? (
           <div className="empty-state">
-            <ShoppingBag size={34} />
+            <ShoppingBag size={34} aria-hidden="true" />
             <h3>Корзина пока пуста</h3>
             <p>Добавьте товары из каталога, чтобы оформить заказ.</p>
             <button className="primary-button" onClick={onClose}>Перейти к товарам</button>
           </div>
         ) : (
           <>
-            <div className="drawer-lines">
+            <ul className="drawer-lines" aria-label="Товары в корзине">
               {lines.map(({ product, quantity }) => (
-                <div className="cart-line" key={product.id}>
+                <li className="cart-line" key={product.id}>
                   <ProductArt product={product} compact />
                   <div className="cart-line-copy">
                     <strong>{product.brand} {product.model}</strong>
                     <span>{product.subtitle}</span>
-                    <div className="quantity">
-                      <button onClick={() => setCartQuantity(product.id, quantity - 1)}><Minus size={14} /></button>
-                      <b>{quantity}</b>
-                      <button onClick={() => setCartQuantity(product.id, quantity + 1)}><Plus size={14} /></button>
+                    <div className="quantity" role="group" aria-label={`Количество: ${productName(product)}`}>
+                      <button type="button" aria-label="Уменьшить количество" onClick={() => setCartQuantity(product.id, quantity - 1)}><Minus size={14} aria-hidden="true" /></button>
+                      <b aria-live="polite">{quantity}</b>
+                      <button
+                        type="button"
+                        aria-label={quantity >= MAX_CART_LINE_QUANTITY ? `Увеличить количество: максимум ${MAX_CART_LINE_QUANTITY} шт.` : "Увеличить количество"}
+                        title={quantity >= MAX_CART_LINE_QUANTITY ? `Не больше ${MAX_CART_LINE_QUANTITY} шт. одной позиции` : undefined}
+                        aria-disabled={quantity >= MAX_CART_LINE_QUANTITY || undefined}
+                        onClick={() => {
+                          if (quantity < MAX_CART_LINE_QUANTITY) setCartQuantity(product.id, quantity + 1);
+                        }}
+                      >
+                        <Plus size={14} aria-hidden="true" />
+                      </button>
                     </div>
                   </div>
                   <div className="cart-line-price">
                     <strong>{formatPrice(product.price * quantity)}</strong>
-                    <button onClick={() => setCartQuantity(product.id, 0)}>Удалить</button>
+                    <button type="button" aria-label={`Удалить из корзины: ${productName(product)}`} onClick={() => setCartQuantity(product.id, 0)}>Удалить</button>
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
             <div className="drawer-summary">
               <div><span>Товары</span><strong>{formatPrice(total)}</strong></div>
               <div>
@@ -756,17 +825,18 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
                   notify(`Заказ ${number} сохранен`);
                 }}
               />
-              <button className="clear-button" onClick={clearCart}>Очистить корзину</button>
+              <button type="button" className="clear-button" onClick={clearCart}>Очистить корзину</button>
             </div>
           </>
         )}
-      </aside>
+      </section>
     </Overlay>
   );
 }
 
 function QuickView({ product, onClose, notify }: { product: Product | null; onClose: () => void; notify: (m: string) => void }) {
   const { addToCart, favorites, toggleFavorite } = useStore();
+  const titleId = useId();
   if (!product) return null;
   const favorite = favorites.includes(product.id);
   const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
@@ -774,8 +844,8 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
 
   return (
     <Overlay open={Boolean(product)} onClose={onClose} className="modal-overlay">
-      <section className="modal product-modal">
-        <button className="modal-close" onClick={onClose}><X /></button>
+      <section className="modal product-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Закрыть быстрый просмотр"><X aria-hidden="true" /></button>
         <div className="product-modal-art"><ProductArt product={product} /></div>
         <div className="product-modal-copy">
           <div className="modal-badges">
@@ -784,9 +854,9 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
               <span className="rating"><Star size={13} fill="currentColor" /> {product.rating}{product.reviews ? ` · ${product.reviews} отзывов` : ""}</span>
             )}
           </div>
-          <h2><span>{product.brand}</span> {product.model}</h2>
+          <h2 id={titleId}><span>{product.brand}</span> {product.model}</h2>
           <p className="product-modal-size">{product.subtitle}</p>
-          <div className="compatibility-ok"><BadgeCheck size={19} /> Параметры совместимости будут подтверждены при обработке заказа</div>
+          <div className="compatibility-ok"><BadgeCheck size={19} aria-hidden="true" /> Параметры совместимости будут подтверждены при обработке заказа</div>
           <dl className="spec-list">
             <div><dt>Артикул</dt><dd>{product.sku}</dd></div>
             <div><dt>{product.kind === "tire" ? "Сезон" : "Цвет"}</dt><dd>{product.kind === "tire" ? seasonLabels[product.season] : product.color}</dd></div>
@@ -799,6 +869,7 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
           </div>
           <div className="modal-buy-actions">
             <button
+              type="button"
               className="primary-button"
               onClick={() => {
                 addToCart(product.id, 4);
@@ -806,10 +877,19 @@ function QuickView({ product, onClose, notify }: { product: Product | null; onCl
                 onClose();
               }}
             >
-              Купить комплект <ArrowRight size={17} />
+              Купить комплект <ArrowRight size={17} aria-hidden="true" />
             </button>
-            <button className={favorite ? "secondary-button active" : "secondary-button"} onClick={() => toggleFavorite(product.id)}>
-              <Heart size={18} fill={favorite ? "currentColor" : "none"} />
+            <button
+              type="button"
+              className={favorite ? "secondary-button icon-only active" : "secondary-button icon-only"}
+              aria-label={`В избранное: ${productName(product)}`}
+              aria-pressed={favorite}
+              onClick={() => {
+                toggleFavorite(product.id);
+                notify(favorite ? "Убрано из избранного" : "Добавлено в избранное");
+              }}
+            >
+              <Heart size={18} fill={favorite ? "currentColor" : "none"} aria-hidden="true" />
             </button>
           </div>
           {catalogIsPreview && <p className="split-pay">Карточка содержит демонстрационные коммерческие данные</p>}
@@ -831,6 +911,7 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
   }>>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersMessage, setOrdersMessage] = useState("");
+  const titleId = useId();
 
   useEffect(() => {
     if (!open || !user) return;
@@ -861,24 +942,24 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
 
   return (
     <Overlay open={open} onClose={onClose} className="drawer-overlay">
-      <aside className="drawer account-drawer">
+      <section className="drawer account-drawer" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="drawer-head">
-          <div><p className="eyebrow">Личный кабинет</p><h2>{user?.name}</h2></div>
-          <button className="icon-button" onClick={onClose}><X /></button>
+          <div><p className="eyebrow">Личный кабинет</p><h2 id={titleId}>{user?.name}</h2></div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Закрыть личный кабинет"><X aria-hidden="true" /></button>
         </div>
         <div className="profile-card">
           <span className="profile-avatar">{user?.name.slice(0, 1).toUpperCase()}</span>
           <div><strong>{user?.email}</strong><span>{user?.role === "admin" ? "Администратор" : user?.role === "manager" ? "Менеджер" : "Покупатель"}</span></div>
         </div>
         {(user?.role === "admin" || user?.role === "manager") && (
-          <Link className="primary-button full" href="/admin">Открыть панель управления <ArrowRight size={17} /></Link>
+          <Link className="primary-button full" href="/admin">Открыть панель управления <ArrowRight size={17} aria-hidden="true" /></Link>
         )}
         <div className="account-section">
           <p className="eyebrow">Мои автомобили</p>
           <div className="saved-car">
-            <span className="logo-mark small"><i /><i /><i /></span>
+            <span className="logo-mark small" aria-hidden="true"><i /><i /><i /></span>
             <div><strong>Автомобиль не выбран</strong><span>Добавьте авто для точного подбора</span></div>
-            <button onClick={onClose}>Добавить</button>
+            <button type="button" onClick={onClose}>Добавить</button>
           </div>
         </div>
         <div className="account-section">
@@ -900,36 +981,38 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
             </div>
           )}
         </div>
-        <button className="logout-button" onClick={() => { logout(); onClose(); }}>Выйти из аккаунта</button>
-      </aside>
+        <button type="button" className="logout-button" onClick={() => { logout(); onClose(); }}>Выйти из аккаунта</button>
+      </section>
     </Overlay>
   );
 }
 
-function CollectionDrawer({ open, onClose, mode }: { open: boolean; onClose: () => void; mode: "favorites" | "compare" }) {
+function CollectionDrawer({ open, onClose, mode, notify }: { open: boolean; onClose: () => void; mode: "favorites" | "compare"; notify: (message: string) => void }) {
   const { favorites, compare, products, toggleFavorite, toggleCompare, addToCart } = useStore();
   const ids = mode === "favorites" ? favorites : compare;
   const items = ids.map((id) => products.find((p) => p.id === id)).filter(Boolean) as Product[];
+  const titleId = useId();
+  const title = mode === "favorites" ? "Избранное" : "Сравнение";
   return (
     <Overlay open={open} onClose={onClose} className="drawer-overlay">
-      <aside className="drawer collection-drawer">
+      <section className="drawer collection-drawer" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="drawer-head">
           <div>
             <p className="eyebrow">{mode === "favorites" ? "Сохранённое" : "Характеристики"}</p>
-            <h2>{mode === "favorites" ? "Избранное" : "Сравнение"} <span>{items.length}</span></h2>
+            <h2 id={titleId}>{title} <span>{items.length}</span></h2>
           </div>
-          <button className="icon-button" onClick={onClose}><X /></button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label={`Закрыть: ${title}`}><X aria-hidden="true" /></button>
         </div>
         {items.length === 0 ? (
           <div className="empty-state">
-            {mode === "favorites" ? <Heart size={34} /> : <GitCompareArrows size={34} />}
+            {mode === "favorites" ? <Heart size={34} aria-hidden="true" /> : <GitCompareArrows size={34} aria-hidden="true" />}
             <h3>{mode === "favorites" ? "Нет избранных товаров" : "Список сравнения пуст"}</h3>
             <p>Добавляйте модели из каталога, чтобы вернуться к ним позже.</p>
           </div>
         ) : (
-          <div className="collection-list">
+          <ul className="collection-list" aria-label={title}>
             {items.map((product) => (
-              <div className="collection-item" key={product.id}>
+              <li className="collection-item" key={product.id}>
                 <ProductArt product={product} compact />
                 <div>
                   <strong>{product.brand} {product.model}</strong>
@@ -938,27 +1021,57 @@ function CollectionDrawer({ open, onClose, mode }: { open: boolean; onClose: () 
                   <b>{formatPrice(product.price)}</b>
                 </div>
                 <div className="collection-actions">
-                  <button onClick={() => addToCart(product.id)}><ShoppingBag size={17} /></button>
-                  <button onClick={() => mode === "favorites" ? toggleFavorite(product.id) : toggleCompare(product.id)}><X size={17} /></button>
+                  <button type="button" aria-label={`Добавить в корзину: ${productName(product)}`} onClick={() => { addToCart(product.id); notify("Товар добавлен в корзину"); }}><ShoppingBag size={17} aria-hidden="true" /></button>
+                  <button type="button" aria-label={`${mode === "favorites" ? "Убрать из избранного" : "Убрать из сравнения"}: ${productName(product)}`} onClick={() => mode === "favorites" ? toggleFavorite(product.id) : toggleCompare(product.id)}><X size={17} aria-hidden="true" /></button>
                 </div>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </aside>
+      </section>
     </Overlay>
   );
 }
 
-export function Storefront({ initialKind = "all" }: { initialKind?: "all" | ProductKind }) {
+interface StorefrontProps {
+  initialKind?: "all" | ProductKind;
+  /** First catalog page rendered on the server (database mode). */
+  initialCatalog?: InitialCatalog | null;
+  /** Page heading (H1). */
+  heading: string;
+  /** Short factual introduction shown in the hero. */
+  intro: string;
+}
+
+type CatalogStatus = "loading" | "ready" | "error";
+
+/** Keeps a controlled <select> on an existing option when facets change. */
+function pickAvailableOption(value: string, options: number[]): string {
+  return options.length === 0 || options.some((option) => String(option) === value)
+    ? value
+    : String(options[0]);
+}
+
+function isModifiedClick(event: React.MouseEvent) {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
+
+export function Storefront({
+  initialKind = "all",
+  initialCatalog = null,
+  heading,
+  intro,
+}: StorefrontProps) {
   const { products, cart, favorites, compare, user, mergeCatalogProducts } = useStore();
+  const pathname = usePathname();
   const databaseCatalogEnabled = businessConfig.catalog.dataMode === "database";
-  const [filters, setFilters] = useState<CatalogFilters>({
-    ...initialFilters,
-    kind: initialKind,
-  });
+  const defaultFilters = useMemo<CatalogFilters>(
+    () => ({ ...initialFilters, kind: initialKind }),
+    [initialKind],
+  );
+  const [filters, setFilters] = useState<CatalogFilters>(defaultFilters);
   const [selectorTab, setSelectorTab] = useState<"size" | "car">("size");
-  const [heroKind, setHeroKind] = useState<ProductKind>("tire");
+  const [heroKind, setHeroKind] = useState<ProductKind>(initialKind === "wheel" ? "wheel" : "tire");
   const [heroWidth, setHeroWidth] = useState("225");
   const [heroProfile, setHeroProfile] = useState("45");
   const [heroDiameter, setHeroDiameter] = useState("18");
@@ -981,25 +1094,50 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
   const [quickView, setQuickView] = useState<Product | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("cart") === "open") setCartOpen(true);
-  }, []);
   const [accountOpen, setAccountOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [collection, setCollection] = useState<"favorites" | "compare" | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
-  const [toast, setToast] = useState("");
-  const [catalogPage, setCatalogPage] = useState(1);
-  const [serverCatalogProducts, setServerCatalogProducts] = useState<Product[]>([]);
-  const [serverCatalogTotal, setServerCatalogTotal] = useState(0);
-  const [serverCatalogTotalPages, setServerCatalogTotalPages] = useState(0);
-  const [serverCatalogMessage, setServerCatalogMessage] = useState("");
-  const [serverFacets, setServerFacets] = useState<{
-    brands: string[];
-    widths: number[];
-    profiles: number[];
-    diameters: number[];
-  }>({ brands: [], widths: [], profiles: [], diameters: [] });
+  const mobileMenuButtonReference = useRef<HTMLButtonElement>(null);
+  const mainNavigationReference = useRef<HTMLElement>(null);
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+  const toastTimeoutReference = useRef<number | undefined>(undefined);
+  const catalogFilterKey = JSON.stringify(filters);
+  // The page number belongs to one set of filters: any filter change starts
+  // again from page 1 without an extra render or request.
+  const [catalogPageState, setCatalogPageState] = useState({
+    filterKey: catalogFilterKey,
+    page: 1,
+  });
+  const catalogPage =
+    catalogPageState.filterKey === catalogFilterKey ? catalogPageState.page : 1;
+  const [serverCatalogProducts, setServerCatalogProducts] = useState<Product[]>(
+    initialCatalog?.items ?? [],
+  );
+  const [serverCatalogTotal, setServerCatalogTotal] = useState(initialCatalog?.total ?? 0);
+  const [serverCatalogTotalPages, setServerCatalogTotalPages] = useState(
+    initialCatalog?.totalPages ?? 0,
+  );
+  const [serverFacets, setServerFacets] = useState<CatalogFacets>(
+    initialCatalog?.facets ?? EMPTY_CATALOG_FACETS,
+  );
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(
+    databaseCatalogEnabled && !initialCatalog ? "loading" : "ready",
+  );
+  const [catalogReloadToken, setCatalogReloadToken] = useState(0);
+  // Query string of the products currently shown (database mode). Starts
+  // with the server-rendered page, so the browser does not request it again.
+  const loadedCatalogQueryReference = useRef<string | null>(initialCatalog?.queryKey ?? null);
+  const previousCatalogFiltersReference = useRef<CatalogFilters | null>(null);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("cart") === "open") setCartOpen(true);
+    if (window.location.hash === "#selector") setSelectorTab("car");
+  }, []);
+
+  useEffect(() => {
+    if (initialCatalog?.items.length) mergeCatalogProducts(initialCatalog.items);
+  }, [initialCatalog, mergeCatalogProducts]);
 
   const brands = useMemo(
     () => databaseCatalogEnabled ? serverFacets.brands : [...new Set(products.map((p) => p.brand))].sort(),
@@ -1017,74 +1155,66 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     }),
     [databaseCatalogEnabled, products, serverFacets],
   );
+  const heroWidthValue = pickAvailableOption(heroWidth, dimensions.widths);
+  const heroProfileValue = pickAvailableOption(heroProfile, dimensions.profiles);
+  const heroDiameterValue = pickAvailableOption(heroDiameter, dimensions.diameters);
 
-  const catalogFilterKey = JSON.stringify(filters);
+  const catalogQueryKey = useMemo(
+    () => buildCatalogSearchParams(filters, catalogPage).toString(),
+    [filters, catalogPage],
+  );
 
   useEffect(() => {
     if (!databaseCatalogEnabled) return;
-    setCatalogPage(1);
-  }, [catalogFilterKey, databaseCatalogEnabled]);
-
-  useEffect(() => {
-    if (!databaseCatalogEnabled) return;
+    const previousFilters = previousCatalogFiltersReference.current;
+    previousCatalogFiltersReference.current = filters;
+    if (loadedCatalogQueryReference.current === catalogQueryKey) {
+      // Already on screen: the server-rendered first page, or a return to
+      // the filters whose results are still displayed.
+      setCatalogStatus("ready");
+      setFitmentLookupLoading(false);
+      return;
+    }
+    // Wait for a pause only while the visitor types a search or drags the
+    // price slider; every other change loads immediately.
+    const continuousInput =
+      previousFilters !== null &&
+      (previousFilters.query !== filters.query ||
+        previousFilters.maxPrice !== filters.maxPrice);
     const abortController = new AbortController();
-    const timeout = window.setTimeout(() => {
-      const selectedFilters = JSON.parse(catalogFilterKey) as CatalogFilters;
-      const parameters = new URLSearchParams({
-        type: selectedFilters.kind,
-        sort: selectedFilters.sort === "price-asc" ? "price_asc" : selectedFilters.sort === "price-desc" ? "price_desc" : "newest",
-        page: String(catalogPage),
-        pageSize: "24",
-      });
-      if (selectedFilters.brands.length) parameters.set("brand", selectedFilters.brands.join(","));
-      if (selectedFilters.seasons.length) parameters.set("season", selectedFilters.seasons.join(","));
-      if (selectedFilters.width) parameters.set("width", selectedFilters.width);
-      if (selectedFilters.profile) parameters.set("profile", selectedFilters.profile);
-      if (selectedFilters.diameter) parameters.set("diameter", selectedFilters.diameter);
-      if (selectedFilters.minPrice > 0) parameters.set("minPrice", String(selectedFilters.minPrice));
-      if (selectedFilters.maxPrice < initialFilters.maxPrice) parameters.set("maxPrice", String(selectedFilters.maxPrice));
-      if (selectedFilters.inStock) parameters.set("inStock", "true");
-      if (selectedFilters.studded) parameters.set("studded", "true");
-      if (selectedFilters.runflat) parameters.set("runflat", "true");
-      if (selectedFilters.query.trim()) parameters.set("search", selectedFilters.query.trim());
-      if (selectedFilters.carMake && selectedFilters.carModel && selectedFilters.carGeneration) {
-        parameters.set("vehicleMake", selectedFilters.carMake);
-        parameters.set("vehicleModel", selectedFilters.carModel);
-        parameters.set("vehicleGeneration", selectedFilters.carGeneration);
-        if (selectedFilters.carModification) parameters.set("vehicleModification", selectedFilters.carModification);
-      }
-      setFitmentLookupLoading(Boolean(selectedFilters.carMake));
-      setServerCatalogMessage("");
-      void fetch(`/api/v1/products?${parameters.toString()}`, {
+    const timeoutId = window.setTimeout(() => {
+      setCatalogStatus("loading");
+      setFitmentLookupLoading(Boolean(filters.carMake));
+      void fetch(`/api/v1/products?${catalogQueryKey}`, {
         cache: "no-store",
         signal: abortController.signal,
       }).then(async (response) => {
-        const result = (await response.json()) as {
+        const result = (await response.json().catch(() => null)) as {
           items?: Product[];
           pagination?: { total: number; totalPages: number };
-          facets?: { brands: string[]; widths: number[]; profiles: number[]; diameters: number[] };
+          facets?: CatalogFacets;
           message?: string;
-        };
-        if (!response.ok) throw new Error(result.message || "Каталог временно недоступен.");
+        } | null;
+        if (!response.ok || !result) throw new Error(result?.message || "Каталог временно недоступен.");
         const items = result.items ?? [];
         setServerCatalogProducts(items);
         mergeCatalogProducts(items);
         setServerCatalogTotal(result.pagination?.total ?? 0);
         setServerCatalogTotalPages(result.pagination?.totalPages ?? 0);
         if (result.facets) setServerFacets(result.facets);
-      }).catch((error: unknown) => {
-        if ((error as { name?: string }).name !== "AbortError") {
-          setServerCatalogProducts([]);
-          setServerCatalogTotal(0);
-          setServerCatalogMessage(error instanceof Error ? error.message : "Каталог временно недоступен.");
-        }
-      }).finally(() => setFitmentLookupLoading(false));
-    }, 350);
+        loadedCatalogQueryReference.current = catalogQueryKey;
+        setCatalogStatus("ready");
+      }).catch(() => {
+        if (!abortController.signal.aborted) setCatalogStatus("error");
+      }).finally(() => {
+        if (!abortController.signal.aborted) setFitmentLookupLoading(false);
+      });
+    }, continuousInput ? 300 : 0);
     return () => {
-      window.clearTimeout(timeout);
+      window.clearTimeout(timeoutId);
       abortController.abort();
     };
-  }, [catalogFilterKey, catalogPage, databaseCatalogEnabled, mergeCatalogProducts]);
+  }, [catalogQueryKey, catalogReloadToken, databaseCatalogEnabled, filters, mergeCatalogProducts]);
 
   const vehicleYears = useMemo(() => {
     const latestModelYear = new Date().getUTCFullYear() + 1;
@@ -1183,10 +1313,8 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       .then((result) => {
         setVehicleMakes(result.items);
         setVehicleCatalogMessage(
-          result.source === "postgresql"
-            ? `В базе применяемости марок: ${result.items.length}.`
-            : result.source === "regional-fallback"
-            ? "Используется резервный справочник марок."
+          result.source === "regional-fallback"
+            ? "Показываем основной список марок."
             : `Доступно марок: ${result.items.length}.`,
         );
       })
@@ -1283,14 +1411,81 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
     return () => controller.abort();
   }, [databaseCatalogEnabled,carBrand,carModel,carGeneration,selectedGenerationIsKnown]);
 
-  function notify(message: string) {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2400);
-  }
+  const notify = useCallback((message: string) => {
+    window.clearTimeout(toastTimeoutReference.current);
+    setToast((current) => ({ id: (current?.id ?? 0) + 1, message }));
+    toastTimeoutReference.current = window.setTimeout(() => setToast(null), 2600);
+  }, []);
 
   function scrollToCatalog() {
-    document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("catalog")?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
   }
+
+  function goToCatalogPage(page: number) {
+    setCatalogPageState({ filterKey: catalogFilterKey, page });
+    scrollToCatalog();
+  }
+
+  function showCategory(kind: ProductKind) {
+    setFilters((current) =>
+      kind === "tire"
+        ? { ...current, kind: "tire" }
+        : { ...current, kind: "wheel", seasons: [], width: "", profile: "", studded: false, runflat: false },
+    );
+    setVisible(8);
+    scrollToCatalog();
+  }
+
+  /**
+   * Category links lead to /shiny and /diski (crawlable URLs). On the
+   * category page itself the click filters the catalog in place instead.
+   */
+  function handleCategoryLinkClick(event: React.MouseEvent<HTMLAnchorElement>, kind: ProductKind) {
+    setMobileMenu(false);
+    if (isModifiedClick(event) || pathname !== (kind === "tire" ? "/shiny" : "/diski")) return;
+    event.preventDefault();
+    showCategory(kind);
+  }
+
+  /** "По автомобилю": every storefront page has the selector, so stay here. */
+  function handleCarSelectorLinkClick(event: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>) {
+    setMobileMenu(false);
+    if (isModifiedClick(event) || !document.getElementById("selector")) return;
+    event.preventDefault();
+    setSelectorTab("car");
+    document.getElementById("selector")?.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
+    window.requestAnimationFrame(() =>
+      document.getElementById("selector-tab-car")?.focus({ preventScroll: true }),
+    );
+  }
+
+  useEffect(() => {
+    if (!mobileMenu) return;
+    // Disclosure menu: move focus to its first link (the menu button is only
+    // visible in the compact layout, where the navigation is collapsed).
+    if (mobileMenuButtonReference.current?.offsetParent) {
+      mainNavigationReference.current?.querySelector<HTMLElement>("a, button")?.focus();
+    }
+    function closeMenuOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setMobileMenu(false);
+      mobileMenuButtonReference.current?.focus();
+    }
+    document.addEventListener("keydown", closeMenuOnEscape);
+    return () => document.removeEventListener("keydown", closeMenuOnEscape);
+  }, [mobileMenu]);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    // The filter dialog exists only in the mobile layout.
+    const desktopLayout = window.matchMedia("(min-width: 761px)");
+    const closeOnDesktop = () => {
+      if (desktopLayout.matches) setFiltersOpen(false);
+    };
+    closeOnDesktop();
+    desktopLayout.addEventListener("change", closeOnDesktop);
+    return () => desktopLayout.removeEventListener("change", closeOnDesktop);
+  }, [filtersOpen]);
 
   function updateSelectedCarBrand(nextBrand: string) {
     setCarBrand(nextBrand);
@@ -1317,9 +1512,10 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       setFilters((current) => ({
         ...current,
         kind: heroKind,
-        width: heroKind === "tire" ? heroWidth : "",
-        profile: heroKind === "tire" ? heroProfile : "",
-        diameter: heroDiameter,
+        width: heroKind === "tire" ? heroWidthValue : "",
+        profile: heroKind === "tire" ? heroProfileValue : "",
+        diameter: heroDiameterValue,
+        ...(heroKind === "wheel" ? { seasons: [], studded: false, runflat: false } : {}),
         carMake: "",
         carModel: "",
         carYear: "",
@@ -1375,77 +1571,107 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
   }
 
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
-
-  const filterPanel = (
-    <div className="filters-panel">
-      <div className="filters-mobile-head">
-        <h3>Фильтры</h3>
-        <button onClick={() => setFiltersOpen(false)}><X /></button>
-      </div>
-      <div className="filter-group">
-        <p>Категория</p>
-        <div className="segmented">
-          {[
-            ["all", "Все"],
-            ["tire", "Шины"],
-            ["wheel", "Диски"],
-          ].map(([value, label]) => (
-            <button key={value} className={filters.kind === value ? "active" : ""} onClick={() => setFilters((f) => ({ ...f, kind: value as CatalogFilters["kind"], width: value === "wheel" ? "" : f.width, profile: value === "wheel" ? "" : f.profile }))}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-      {filters.kind !== "wheel" && (
-        <div className="filter-group">
-          <p>Сезон</p>
-          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("summer")} onChange={() => toggleMulti("seasons", "summer" as Season)} /><span>Летние</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "summer").length}</small>}</label>
-          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("winter")} onChange={() => toggleMulti("seasons", "winter" as Season)} /><span>Зимние</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "winter").length}</small>}</label>
-          <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("all-season")} onChange={() => toggleMulti("seasons", "all-season" as Season)} /><span>Всесезонные</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "all-season").length}</small>}</label>
-        </div>
-      )}
-      <div className="filter-group">
-        <p>Цена до <strong>{formatPrice(filters.maxPrice)}</strong></p>
-        <input className="price-range" type="range" min="10000" max="60000" step="1000" value={filters.maxPrice} onChange={(event) => setFilters((f) => ({ ...f, maxPrice: Number(event.target.value) }))} />
-        <div className="range-labels"><span>10 000 ₽</span><span>60 000 ₽</span></div>
-      </div>
-      <div className="filter-group">
-        <p>Размер</p>
-        <div className="triple-select">
-          {filters.kind !== "wheel" && (
-            <>
-              <label><span>Ширина</span><select value={filters.width} onChange={(e) => setFilters((f) => ({ ...f, width: e.target.value }))}><option value="">Все</option>{dimensions.widths.map((v) => <option key={v}>{v}</option>)}</select></label>
-              <label><span>Профиль</span><select value={filters.profile} onChange={(e) => setFilters((f) => ({ ...f, profile: e.target.value }))}><option value="">Все</option>{dimensions.profiles.map((v) => <option key={v}>{v}</option>)}</select></label>
-            </>
-          )}
-          <label><span>Диаметр</span><select value={filters.diameter} onChange={(e) => setFilters((f) => ({ ...f, diameter: e.target.value }))}><option value="">Все</option>{dimensions.diameters.map((v) => <option key={v} value={v}>R{v}</option>)}</select></label>
-        </div>
-      </div>
-      <div className="filter-group brand-filter">
-        <p>Бренд</p>
-        {brands.map((brand) => (
-          <label className="check-row" key={brand}><input type="checkbox" checked={filters.brands.includes(brand)} onChange={() => toggleMulti("brands", brand)} /><span>{brand}</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.brand === brand).length}</small>}</label>
-        ))}
-      </div>
-      <div className="filter-group">
-        <label className="switch-row"><span><strong>Только в наличии</strong><small>Есть доступный остаток</small></span><input type="checkbox" checked={filters.inStock} onChange={(e) => setFilters((f) => ({ ...f, inStock: e.target.checked }))} /></label>
-        {filters.kind !== "wheel" && (
-          <>
-            <label className="switch-row"><span><strong>Шипованные</strong><small>Для сложной зимы</small></span><input type="checkbox" checked={filters.studded} onChange={(e) => setFilters((f) => ({ ...f, studded: e.target.checked }))} /></label>
-            <label className="switch-row"><span><strong>RunFlat</strong><small>Проверьте требования производителя</small></span><input type="checkbox" checked={filters.runflat} onChange={(e) => setFilters((f) => ({ ...f, runflat: e.target.checked }))} /></label>
-          </>
-        )}
-      </div>
-      <button className="reset-button" onClick={() => setFilters(initialFilters)}>Сбросить все фильтры</button>
-      <button className="primary-button full filters-apply" onClick={() => setFiltersOpen(false)}>Показать {databaseCatalogEnabled ? serverCatalogTotal : filteredProducts.length}</button>
-    </div>
+  const foundCount = databaseCatalogEnabled ? serverCatalogTotal : filteredProducts.length;
+  const catalogAnnouncement = useDebouncedValue(
+    catalogStatus === "loading"
+      ? ""
+      : catalogStatus === "error"
+        ? "Не удалось загрузить каталог."
+        : `Найдено товаров: ${foundCount}.`,
+    700,
   );
 
+  function resetFilters() {
+    setFilters(defaultFilters);
+    setVisible(8);
+  }
+
+  function selectCategoryFilter(kind: CatalogFilters["kind"]) {
+    setFilters((current) =>
+      kind === "wheel"
+        ? { ...current, kind, seasons: [], width: "", profile: "", studded: false, runflat: false }
+        : { ...current, kind },
+    );
+  }
+
+  function renderFilterPanel(variant: "sidebar" | "dialog") {
+    const idPrefix = `filters-${variant}`;
+    return (
+      <div className="filters-panel">
+        {variant === "dialog" && (
+          <div className="filters-mobile-head">
+            <h2 id="mobile-filters-title">Фильтры</h2>
+            <button type="button" onClick={() => setFiltersOpen(false)} aria-label="Закрыть фильтры"><X aria-hidden="true" /></button>
+          </div>
+        )}
+        <div className="filter-group" role="group" aria-labelledby={`${idPrefix}-kind`}>
+          <p id={`${idPrefix}-kind`}>Категория</p>
+          <div className="segmented">
+            {([
+              ["all", "Все"],
+              ["tire", "Шины"],
+              ["wheel", "Диски"],
+            ] as const).map(([value, label]) => (
+              <button type="button" key={value} className={filters.kind === value ? "active" : ""} aria-pressed={filters.kind === value} onClick={() => selectCategoryFilter(value)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {filters.kind !== "wheel" && (
+          <div className="filter-group" role="group" aria-labelledby={`${idPrefix}-season`}>
+            <p id={`${idPrefix}-season`}>Сезон</p>
+            <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("summer")} onChange={() => toggleMulti("seasons", "summer" as Season)} /><span>Летние</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "summer").length}</small>}</label>
+            <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("winter")} onChange={() => toggleMulti("seasons", "winter" as Season)} /><span>Зимние</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "winter").length}</small>}</label>
+            <label className="check-row"><input type="checkbox" checked={filters.seasons.includes("all-season")} onChange={() => toggleMulti("seasons", "all-season" as Season)} /><span>Всесезонные</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.season === "all-season").length}</small>}</label>
+          </div>
+        )}
+        <div className="filter-group">
+          <p id={`${idPrefix}-price`}>Цена до <strong>{formatPrice(filters.maxPrice)}</strong></p>
+          <input className="price-range" type="range" min="10000" max={CATALOG_MAX_PRICE_FILTER} step="1000" value={filters.maxPrice} aria-label="Максимальная цена" aria-valuetext={formatPrice(filters.maxPrice)} onChange={(event) => setFilters((f) => ({ ...f, maxPrice: Number(event.target.value) }))} />
+          <div className="range-labels" aria-hidden="true"><span>10 000 ₽</span><span>60 000 ₽</span></div>
+        </div>
+        <div className="filter-group" role="group" aria-labelledby={`${idPrefix}-size`}>
+          <p id={`${idPrefix}-size`}>Размер</p>
+          <div className="triple-select">
+            {filters.kind !== "wheel" && (
+              <>
+                <label><span>Ширина</span><select value={filters.width} onChange={(e) => setFilters((f) => ({ ...f, width: e.target.value }))}><option value="">Все</option>{dimensions.widths.map((v) => <option key={v}>{v}</option>)}</select></label>
+                <label><span>Профиль</span><select value={filters.profile} onChange={(e) => setFilters((f) => ({ ...f, profile: e.target.value }))}><option value="">Все</option>{dimensions.profiles.map((v) => <option key={v}>{v}</option>)}</select></label>
+              </>
+            )}
+            <label><span>Диаметр</span><select value={filters.diameter} onChange={(e) => setFilters((f) => ({ ...f, diameter: e.target.value }))}><option value="">Все</option>{dimensions.diameters.map((v) => <option key={v} value={v}>R{v}</option>)}</select></label>
+          </div>
+        </div>
+        <div className="filter-group brand-filter" role="group" aria-labelledby={`${idPrefix}-brand`}>
+          <p id={`${idPrefix}-brand`}>Бренд</p>
+          {brands.map((brand) => (
+            <label className="check-row" key={brand}><input type="checkbox" checked={filters.brands.includes(brand)} onChange={() => toggleMulti("brands", brand)} /><span>{brand}</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.brand === brand).length}</small>}</label>
+          ))}
+        </div>
+        <div className="filter-group">
+          <label className="switch-row"><span><strong>Только в наличии</strong><small>Есть доступный остаток</small></span><input type="checkbox" role="switch" checked={filters.inStock} onChange={(e) => setFilters((f) => ({ ...f, inStock: e.target.checked }))} /></label>
+          {filters.kind !== "wheel" && (
+            <>
+              <label className="switch-row"><span><strong>Шипованные</strong><small>Для сложной зимы</small></span><input type="checkbox" role="switch" checked={filters.studded} onChange={(e) => setFilters((f) => ({ ...f, studded: e.target.checked }))} /></label>
+              <label className="switch-row"><span><strong>RunFlat</strong><small>Проверьте требования производителя</small></span><input type="checkbox" role="switch" checked={filters.runflat} onChange={(e) => setFilters((f) => ({ ...f, runflat: e.target.checked }))} /></label>
+            </>
+          )}
+        </div>
+        <button type="button" className="reset-button" onClick={resetFilters}>Сбросить все фильтры</button>
+        {variant === "dialog" && (
+          <button type="button" className="primary-button full filters-apply" onClick={() => setFiltersOpen(false)}>Показать {foundCount}</button>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <main>
+    <>
+      <a className="skip-link" href="#main-content">Перейти к основному содержанию</a>
       <div className="utility-bar">
         <div className="container utility-inner">
-          <div className="utility-location"><MapPin size={14} /> {businessConfig.location.city}</div>
+          <div className="utility-location"><MapPin size={14} aria-hidden="true" /> {businessConfig.location.city}</div>
           <div className="utility-promise">
             {businessConfig.catalog.dataMode === "preview"
               ? "Предварительная версия · реквизиты, цены и наличие требуют подтверждения"
@@ -1456,15 +1682,25 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       </div>
       <header className="site-header">
         <div className="container header-inner">
-          <button className="mobile-menu-button" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Открыть меню"><Menu /></button>
-          <Link href="/" className="brand-logo" aria-label={businessConfig.brandName}>
-            <span className="logo-mark"><i /><i /><i /></span>
+          <button
+            ref={mobileMenuButtonReference}
+            type="button"
+            className="mobile-menu-button"
+            onClick={() => setMobileMenu((open) => !open)}
+            aria-label={mobileMenu ? "Закрыть меню" : "Открыть меню"}
+            aria-expanded={mobileMenu}
+            aria-controls="main-navigation"
+          >
+            {mobileMenu ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+          </button>
+          <Link href="/" className="brand-logo" aria-label={`${businessConfig.brandName} — на главную`}>
+            <span className="logo-mark" aria-hidden="true"><i /><i /><i /></span>
             <BrandWordmark />
           </Link>
-          <nav className={mobileMenu ? "main-nav open" : "main-nav"}>
-            <button onClick={() => { setFilters((f) => ({ ...f, kind: "tire" })); scrollToCatalog(); setMobileMenu(false); }}>Шины</button>
-            <button onClick={() => { setFilters((f) => ({ ...f, kind: "wheel", seasons: [], width: "", profile: "" })); scrollToCatalog(); setMobileMenu(false); }}>Диски</button>
-            <button onClick={() => { setSelectorTab("car"); document.getElementById("selector")?.scrollIntoView({ behavior: "smooth" }); setMobileMenu(false); }}>По автомобилю</button>
+          <nav id="main-navigation" ref={mainNavigationReference} className={mobileMenu ? "main-nav open" : "main-nav"} aria-label="Основное меню">
+            <Link href="/shiny#catalog" aria-current={pathname === "/shiny" ? "page" : undefined} onClick={(event) => handleCategoryLinkClick(event, "tire")}>Шины</Link>
+            <Link href="/diski#catalog" aria-current={pathname === "/diski" ? "page" : undefined} onClick={(event) => handleCategoryLinkClick(event, "wheel")}>Диски</Link>
+            <Link href="/#selector" onClick={handleCarSelectorLinkClick}>По автомобилю</Link>
             {businessConfig.services.tireService && <a href="#services" onClick={() => setMobileMenu(false)}>Шиномонтаж</a>}
             <Link href="/contacts" onClick={() => setMobileMenu(false)}>Контакты</Link>
           </nav>
@@ -1477,22 +1713,28 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
             )}
           </div>
           <div className="header-actions">
-            <button aria-label="Сравнение" onClick={() => setCollection("compare")}><GitCompareArrows />{compare.length > 0 && <b>{compare.length}</b>}<span>Сравнить</span></button>
-            <button aria-label="Избранное" onClick={() => setCollection("favorites")}><Heart />{favorites.length > 0 && <b>{favorites.length}</b>}<span>Избранное</span></button>
-            <button aria-label="Аккаунт" onClick={() => user ? setAccountOpen(true) : setAuthOpen(true)}><CircleUserRound /><span>{user ? user.name.split(" ")[0] : "Войти"}</span></button>
-            <button className="cart-header-button" aria-label="Корзина" onClick={() => setCartOpen(true)}><ShoppingBag />{cartCount > 0 && <b>{cartCount}</b>}<span>Корзина</span></button>
+            <button type="button" aria-label={compare.length > 0 ? `Сравнение, товаров: ${compare.length}` : "Сравнение"} aria-haspopup="dialog" onClick={() => setCollection("compare")}><GitCompareArrows aria-hidden="true" />{compare.length > 0 && <b aria-hidden="true">{compare.length}</b>}<span aria-hidden="true">Сравнить</span></button>
+            <button type="button" aria-label={favorites.length > 0 ? `Избранное, товаров: ${favorites.length}` : "Избранное"} aria-haspopup="dialog" onClick={() => setCollection("favorites")}><Heart aria-hidden="true" />{favorites.length > 0 && <b aria-hidden="true">{favorites.length}</b>}<span aria-hidden="true">Избранное</span></button>
+            <button type="button" aria-label={user ? `Личный кабинет: ${user.name}` : "Войти в личный кабинет"} aria-haspopup="dialog" onClick={() => user ? setAccountOpen(true) : setAuthOpen(true)}><CircleUserRound aria-hidden="true" /><span aria-hidden="true">{user ? user.name.split(" ")[0] : "Войти"}</span></button>
+            <button type="button" className="cart-header-button" aria-label={cartCount > 0 ? `Корзина, товаров: ${cartCount}` : "Корзина"} aria-haspopup="dialog" onClick={() => setCartOpen(true)}><ShoppingBag aria-hidden="true" />{cartCount > 0 && <b aria-hidden="true">{cartCount}</b>}<span aria-hidden="true">Корзина</span></button>
           </div>
         </div>
       </header>
 
+      <main id="main-content" tabIndex={-1}>
       <section className="hero">
-        <div className="hero-image" />
+        <picture className="hero-image">
+          <source type="image/avif" srcSet="/assets/apex-hero-1804.avif" />
+          <source type="image/webp" srcSet="/assets/apex-hero-1804.webp" />
+          {/* Decorative LCP image: discovered in the HTML and fetched first. */}
+          <img src="/assets/apex-hero-1804.jpg" alt="" width={1804} height={872} fetchPriority="high" />
+        </picture>
         <div className="hero-shade" />
         <div className="container hero-inner">
           <div className="hero-copy">
-            <span className="hero-kicker"><Sparkles size={15} /> Новый уровень подбора</span>
-            <h1>Держим<br /><em>дорогу.</em></h1>
-            <p>Каталог шин и дисков с подбором по параметрам и автомобилю в {businessConfig.location.city}.</p>
+            <h1 className="hero-kicker"><MapPin size={15} aria-hidden="true" /> {heading}</h1>
+            <p className="hero-slogan">Держим <br /><em>дорогу.</em></p>
+            <p className="hero-intro">{intro}</p>
             <div className="hero-proof">
               <span><strong>Размер</strong> ширина, профиль, диаметр</span>
               <span><strong>Автомобиль</strong> марка и модель</span>
@@ -1511,28 +1753,28 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                 <p className="eyebrow">Умный подбор</p>
                 <h2>Найдём идеальную пару</h2>
               </div>
-              <span className="selector-badge"><BadgeCheck size={16} /> Проверка по базе</span>
+              <span className="selector-badge"><BadgeCheck size={16} aria-hidden="true" /> Проверка по базе</span>
             </div>
-            <div className="selector-tabs">
-              <button className={selectorTab === "size" ? "active" : ""} onClick={() => setSelectorTab("size")}>По параметрам</button>
-              <button className={selectorTab === "car" ? "active" : ""} onClick={() => setSelectorTab("car")}>По автомобилю</button>
+            <div className="selector-tabs" role="group" aria-label="Способ подбора">
+              <button type="button" id="selector-tab-size" className={selectorTab === "size" ? "active" : ""} aria-pressed={selectorTab === "size"} onClick={() => setSelectorTab("size")}>По параметрам</button>
+              <button type="button" id="selector-tab-car" className={selectorTab === "car" ? "active" : ""} aria-pressed={selectorTab === "car"} onClick={() => setSelectorTab("car")}>По автомобилю</button>
             </div>
             {selectorTab === "size" ? (
               <div className="selector-content">
-                <div className="product-type-toggle">
-                  <button className={heroKind === "tire" ? "active" : ""} onClick={() => setHeroKind("tire")}>Шины</button>
-                  <button className={heroKind === "wheel" ? "active" : ""} onClick={() => setHeroKind("wheel")}>Диски</button>
+                <div className="product-type-toggle" role="group" aria-label="Что подбираем">
+                  <button type="button" className={heroKind === "tire" ? "active" : ""} aria-pressed={heroKind === "tire"} onClick={() => setHeroKind("tire")}>Шины</button>
+                  <button type="button" className={heroKind === "wheel" ? "active" : ""} aria-pressed={heroKind === "wheel"} onClick={() => setHeroKind("wheel")}>Диски</button>
                 </div>
                 <div className={`selector-fields ${heroKind === "wheel" ? "wheel-mode" : ""}`}>
                   {heroKind === "tire" && (
                     <>
-                      <label><span>Ширина</span><select value={heroWidth} onChange={(e) => setHeroWidth(e.target.value)}>{dimensions.widths.map((v) => <option key={v}>{v}</option>)}</select></label>
-                      <span className="field-divider">/</span>
-                      <label><span>Профиль</span><select value={heroProfile} onChange={(e) => setHeroProfile(e.target.value)}>{dimensions.profiles.map((v) => <option key={v}>{v}</option>)}</select></label>
+                      <label><span>Ширина</span><select value={heroWidthValue} onChange={(e) => setHeroWidth(e.target.value)}>{dimensions.widths.map((v) => <option key={v}>{v}</option>)}</select></label>
+                      <span className="field-divider" aria-hidden="true">/</span>
+                      <label><span>Профиль</span><select value={heroProfileValue} onChange={(e) => setHeroProfile(e.target.value)}>{dimensions.profiles.map((v) => <option key={v}>{v}</option>)}</select></label>
                     </>
                   )}
-                  <span className="field-divider">R</span>
-                  <label><span>Диаметр</span><select value={heroDiameter} onChange={(e) => setHeroDiameter(e.target.value)}>{dimensions.diameters.map((v) => <option key={v}>{v}</option>)}</select></label>
+                  <span className="field-divider" aria-hidden="true">R</span>
+                  <label><span>Диаметр</span><select value={heroDiameterValue} onChange={(e) => setHeroDiameter(e.target.value)}>{dimensions.diameters.map((v) => <option key={v}>{v}</option>)}</select></label>
                 </div>
                 <p className="selector-hint">Размер указан на боковине: например, 225/45 R18</p>
               </div>
@@ -1573,7 +1815,9 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                         : "Выберите или начните вводить"
                     }
                     helperText={
-                      vehicleModelsLoading
+                      !selectedMakeIsKnown
+                        ? "Сначала выберите марку"
+                        : vehicleModelsLoading
                         ? "Обновляем список для выбранного года"
                         : selectedModelIsKnown
                           ? "Модель выбрана"
@@ -1647,13 +1891,14 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                   placeholder="Выберите модификацию" loading={modificationsLoading} disabled={modificationsLoading}
                   onValueChange={setCarModification} onOptionSelect={(option) => setCarModification(option.name)}
                 />}
-                <p className="selector-hint">
+                <p className="selector-hint" aria-live="polite">
                   {vehicleCatalogMessage ||
-                    "Марки и модели загружаются из автомобильного справочника."}
+                    "Выберите марку, модель и год выпуска автомобиля."}
                 </p>
                 <p className="selector-fitment-note">
-                  В рабочем режиме используются только проверенные записи
-                  применяемости из PostgreSQL.
+                  {databaseCatalogEnabled
+                    ? "Подходящие товары показываем по проверенным данным о совместимости с автомобилем."
+                    : "В демонстрационной версии совместимость с автомобилями показана на примерах."}
                 </p>
                 <FitmentRequestForm
                   initialMake={carBrand}
@@ -1664,6 +1909,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
               </div>
             )}
             <button
+              type="button"
               className="selector-submit"
               onClick={submitHeroSearch}
               disabled={
@@ -1676,32 +1922,32 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                   fitmentLookupLoading)
               }
             >
-              <Search size={19} /> {fitmentLookupLoading ? "Проверяем…" : "Показать подходящие"} {!fitmentLookupLoading && <ArrowRight size={18} />}
+              <Search size={19} aria-hidden="true" /> {fitmentLookupLoading ? "Проверяем…" : "Показать подходящие"} {!fitmentLookupLoading && <ArrowRight size={18} aria-hidden="true" />}
             </button>
           </div>
         </div>
       </section>
 
-      <section className="trust-bar">
+      <section className="trust-bar" aria-label="Как устроен подбор">
         <div className="container trust-grid">
-          <div><span><SlidersHorizontal /></span><p><strong>По параметрам</strong>Фильтры по размерам</p></div>
-          <div><span><Car /></span><p><strong>По автомобилю</strong>Классический подбор без AI</p></div>
-          <div><span><ShoppingBag /></span><p><strong>Гостевой заказ</strong>Регистрация необязательна</p></div>
-          <div><span><BadgeCheck /></span><p><strong>Проверяемые данные</strong>Применяемость хранит источник</p></div>
+          <div><span aria-hidden="true"><SlidersHorizontal /></span><p><strong>По параметрам</strong>Фильтры по размерам</p></div>
+          <div><span aria-hidden="true"><Car /></span><p><strong>По автомобилю</strong>Марка, модель и год выпуска</p></div>
+          <div><span aria-hidden="true"><ShoppingBag /></span><p><strong>Гостевой заказ</strong>Регистрация необязательна</p></div>
+          <div><span aria-hidden="true"><BadgeCheck /></span><p><strong>Проверка совместимости</strong>Менеджер подтвердит параметры при обработке заказа</p></div>
         </div>
       </section>
 
-      <section className="catalog-section" id="catalog">
+      <section className="catalog-section" id="catalog" aria-labelledby="catalog-heading">
         <div className="container">
           <div className="catalog-heading">
             <div>
               <p className="eyebrow">Каталог</p>
-              <h2>Подбор без компромиссов</h2>
+              <h2 id="catalog-heading">Подбор без компромиссов</h2>
               <p>{businessConfig.catalog.dataMode === "preview" ? "Демонстрационные товары для согласования интерфейса. Цены и наличие не являются коммерческим предложением." : "Актуальные цены и наличие поступают из базы магазина."}</p>
             </div>
-            <div className="catalog-search">
-              <Search size={18} />
-              <input value={filters.query} onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))} placeholder="Бренд, модель или артикул" />
+            <div className="catalog-search" role="search">
+              <Search size={18} aria-hidden="true" />
+              <input value={filters.query} onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))} placeholder="Бренд, модель или артикул" aria-label="Поиск по каталогу: бренд, модель или артикул" enterKeyHint="search" />
             </div>
           </div>
           {filters.carModel && (
@@ -1711,9 +1957,9 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
               }`}
             >
               {selectedVehicleFitmentCount > 0 ? (
-                <BadgeCheck size={18} />
+                <BadgeCheck size={18} aria-hidden="true" />
               ) : (
-                <Car size={18} />
+                <Car size={18} aria-hidden="true" />
               )}
               <div>
                 <span>
@@ -1733,6 +1979,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                 )}
               </div>
               <button
+                type="button"
                 onClick={() =>
                   setFilters((current) => ({
                     ...current,
@@ -1743,16 +1990,16 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                   }))
                 }
               >
-                <X size={15} /> Сбросить
+                <X size={15} aria-hidden="true" /> Сбросить
               </button>
             </div>
           )}
           <div className="catalog-layout">
-            <aside className="catalog-sidebar">{filterPanel}</aside>
-            <div className="catalog-main">
+            <aside className="catalog-sidebar" aria-label="Фильтры каталога">{renderFilterPanel("sidebar")}</aside>
+            <div className="catalog-main" aria-busy={catalogStatus === "loading"}>
               <div className="catalog-toolbar">
-                <button className="mobile-filter-button" onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={18} /> Фильтры</button>
-                <span>Найдено <strong>{databaseCatalogEnabled ? serverCatalogTotal : filteredProducts.length}</strong></span>
+                <button type="button" className="mobile-filter-button" aria-haspopup="dialog" onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={18} aria-hidden="true" /> Фильтры</button>
+                <span>Найдено <strong>{catalogStatus === "error" || (catalogStatus === "loading" && filteredProducts.length === 0) ? "—" : foundCount}</strong></span>
                 <label>Сортировка
                   <select value={filters.sort} onChange={(e) => setFilters((f) => ({ ...f, sort: e.target.value as CatalogFilters["sort"] }))}>
                     <option value="popular">Сначала новые</option>
@@ -1762,30 +2009,47 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
                   </select>
                 </label>
               </div>
-              {filteredProducts.length > 0 ? (
-                <>
+              <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{catalogAnnouncement}</p>
+              {catalogStatus === "error" ? (
+                <div className="no-results catalog-error">
+                  <RotateCw size={34} aria-hidden="true" />
+                  <h3>Каталог временно недоступен</h3>
+                  <p>Не удалось загрузить товары. Проверьте подключение к интернету и попробуйте ещё раз.</p>
+                  <button type="button" className="secondary-button" onClick={() => setCatalogReloadToken((token) => token + 1)}>
+                    <RotateCw size={16} aria-hidden="true" /> Повторить
+                  </button>
+                </div>
+              ) : catalogStatus === "loading" && filteredProducts.length === 0 ? (
+                <div className="catalog-loading">
+                  <p className="catalog-loading-text">Загружаем каталог…</p>
                   <div className="product-grid">
+                    {Array.from({ length: 8 }, (_, index) => <ProductCardSkeleton key={index} />)}
+                  </div>
+                </div>
+              ) : filteredProducts.length > 0 ? (
+                <>
+                  <div className={catalogStatus === "loading" ? "product-grid is-updating" : "product-grid"}>
                     {(databaseCatalogEnabled ? filteredProducts : filteredProducts.slice(0, visible)).map((product) => (
                       <ProductCard key={product.id} product={product} onQuickView={setQuickView} notify={notify} />
                     ))}
                   </div>
                   {!databaseCatalogEnabled && visible < filteredProducts.length && (
-                    <button className="load-more" onClick={() => setVisible((n) => n + 8)}>Показать ещё <Plus size={17} /></button>
+                    <button type="button" className="load-more" onClick={() => setVisible((n) => n + 8)}>Показать ещё <Plus size={17} aria-hidden="true" /></button>
                   )}
                   {databaseCatalogEnabled && serverCatalogTotalPages > 1 && (
-                    <div className="catalog-pagination">
-                      <button className="load-more" disabled={catalogPage <= 1} onClick={() => setCatalogPage((page) => Math.max(1, page - 1))}>Назад</button>
+                    <nav className="catalog-pagination" aria-label="Страницы каталога">
+                      <button type="button" className="load-more" disabled={catalogPage <= 1 || catalogStatus === "loading"} onClick={() => goToCatalogPage(Math.max(1, catalogPage - 1))}>Назад</button>
                       <span>Страница {catalogPage} из {serverCatalogTotalPages}</span>
-                      <button className="load-more" disabled={catalogPage >= serverCatalogTotalPages} onClick={() => setCatalogPage((page) => page + 1)}>Далее</button>
-                    </div>
+                      <button type="button" className="load-more" disabled={catalogPage >= serverCatalogTotalPages || catalogStatus === "loading"} onClick={() => goToCatalogPage(catalogPage + 1)}>Далее</button>
+                    </nav>
                   )}
                 </>
               ) : (
                 <div className="no-results">
-                  <Search size={34} />
+                  <Search size={34} aria-hidden="true" />
                   <h3>Ничего не нашли</h3>
-                  <p>{serverCatalogMessage || "Попробуйте изменить параметры или оставьте запрос эксперту."}</p>
-                  <button className="secondary-button" onClick={() => setFilters(initialFilters)}>Сбросить фильтры</button>
+                  <p>Попробуйте изменить параметры или оставьте запрос эксперту.</p>
+                  <button type="button" className="secondary-button" onClick={resetFilters}>Сбросить фильтры</button>
                 </div>
               )}
             </div>
@@ -1795,7 +2059,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
 
       {businessConfig.services.tireService && <section className="service-section" id="services">
         <div className="container service-grid">
-          <div className="service-visual">
+          <div className="service-visual" aria-hidden="true">
             <span className="service-number">01</span>
             <div className="service-wheel"><span /><i /><i /><i /><i /><i /></div>
             <div className="service-caption"><strong>{businessConfig.brandName}</strong><span>Шиномонтаж</span></div>
@@ -1809,7 +2073,7 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
               <div><span>02</span><p><strong>Проверка</strong>Контроль параметров автомобиля</p></div>
               <div><span>03</span><p><strong>Установка</strong>Условия подтвердит менеджер</p></div>
             </div>
-            <button className="dark-outline-button" onClick={() => { setSelectorTab("car"); document.getElementById("selector")?.scrollIntoView({ behavior: "smooth" }); }}>Подобрать по автомобилю <ArrowRight size={17} /></button>
+            <button type="button" className="dark-outline-button" onClick={handleCarSelectorLinkClick}>Подобрать по автомобилю <ArrowRight size={17} aria-hidden="true" /></button>
           </div>
         </div>
       </section>}
@@ -1820,23 +2084,29 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
             <p className="eyebrow">Остались вопросы?</p>
             <h2>Свяжитесь<br />с магазином</h2>
           </div>
-          <div className="consult-copy"><p>Уточните наличие, параметры товара и доступные способы получения.</p><a href={normalizeTelephoneHref(businessConfig.contacts.phone)}><Phone size={17} /> {businessConfig.contacts.phone}</a></div>
-          <Link className="light-button" href="/contacts">Все способы связи <ArrowRight size={17} /></Link>
+          <div className="consult-copy"><p>Уточните наличие, параметры товара и доступные способы получения.</p><a href={normalizeTelephoneHref(businessConfig.contacts.phone)}><Phone size={17} aria-hidden="true" /> {businessConfig.contacts.phone}</a></div>
+          <Link className="light-button" href="/contacts">Все способы связи <ArrowRight size={17} aria-hidden="true" /></Link>
         </div>
       </section>}
+      </main>
 
       <footer id="about">
         <div className="container footer-grid">
           <div className="footer-brand">
-            <Link href="/" className="brand-logo light"><span className="logo-mark"><i /><i /><i /></span><BrandWordmark /></Link>
-            <p>Каталог шин и дисков в {businessConfig.location.city}.</p>
+            <Link href="/" className="brand-logo light" aria-label={`${businessConfig.brandName} — на главную`}><span className="logo-mark" aria-hidden="true"><i /><i /><i /></span><BrandWordmark /></Link>
+            <p>Каталог шин и дисков в {businessConfig.location.cityPrepositional}.</p>
             {businessConfig.contacts.phone && <strong>{businessConfig.contacts.phone}</strong>}
             {businessConfig.workingHours && <span>{businessConfig.workingHours}</span>}
-            {!businessConfig.contacts.phone && <span>Контакты требуют заполнения до запуска</span>}
           </div>
-          <div><h4>Каталог</h4><button onClick={() => { setFilters((f) => ({ ...f, kind: "tire" })); scrollToCatalog(); }}>Шины</button><button onClick={() => { setFilters((f) => ({ ...f, kind: "wheel" })); scrollToCatalog(); }}>Диски</button><button onClick={() => { setSelectorTab("car"); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Подбор по авто</button>{businessConfig.services.tireService && <a href="#services">Шиномонтаж</a>}</div>
-          <div><h4>Покупателям</h4><Link href="/legal/delivery-payment-returns">Доставка и оплата</Link><Link href="/legal/delivery-payment-returns">Гарантия и возврат</Link><Link href="/legal/offer">Публичная оферта</Link><Link href="/legal/terms">Правила пользования</Link></div>
-          <div><h4>Компания</h4><Link href="/contacts">Контакты</Link><Link href="/legal/requisites">Реквизиты</Link><Link href="/legal/privacy">Персональные данные</Link><button type="button" onClick={openCookieSettings}>Настройки cookie</button><Link href="/admin">Панель управления</Link></div>
+          <div>
+            <h2 className="footer-title">Каталог</h2>
+            <Link href="/shiny#catalog" onClick={(event) => handleCategoryLinkClick(event, "tire")}>Шины</Link>
+            <Link href="/diski#catalog" onClick={(event) => handleCategoryLinkClick(event, "wheel")}>Диски</Link>
+            <Link href="/#selector" onClick={handleCarSelectorLinkClick}>Подбор по автомобилю</Link>
+            {businessConfig.services.tireService && <a href="#services">Шиномонтаж</a>}
+          </div>
+          <div><h2 className="footer-title">Покупателям</h2><Link href="/legal/delivery-payment-returns">Доставка и оплата</Link><Link href="/legal/delivery-payment-returns">Гарантия и возврат</Link><Link href="/legal/offer">Публичная оферта</Link><Link href="/legal/terms">Правила пользования</Link></div>
+          <div><h2 className="footer-title">Компания</h2><Link href="/contacts">Контакты</Link><Link href="/legal/requisites">Реквизиты</Link><Link href="/legal/privacy">Персональные данные</Link><button type="button" onClick={openCookieSettings}>Настройки cookie</button></div>
         </div>
         <div className="container footer-bottom"><span>© 2026 {businessConfig.brandName}</span><Link href="/legal">Правовая информация</Link><Link href="/legal/privacy">Политика конфиденциальности</Link></div>
       </footer>
@@ -1845,9 +2115,14 @@ export function Storefront({ initialKind = "all" }: { initialKind?: "all" | Prod
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} notify={notify} />
       <QuickView product={quickView} onClose={() => setQuickView(null)} notify={notify} />
       <AccountPanel open={accountOpen} onClose={() => setAccountOpen(false)} />
-      <CollectionDrawer open={Boolean(collection)} onClose={() => setCollection(null)} mode={collection || "favorites"} />
-      <Overlay open={filtersOpen} onClose={() => setFiltersOpen(false)} className="filter-overlay"><aside className="mobile-filters">{filterPanel}</aside></Overlay>
-      {toast && <div className="toast"><Check size={16} /> {toast}</div>}
-    </main>
+      <CollectionDrawer open={Boolean(collection)} onClose={() => setCollection(null)} mode={collection || "favorites"} notify={notify} />
+      <Overlay open={filtersOpen} onClose={() => setFiltersOpen(false)} className="filter-overlay">
+        <div className="mobile-filters" role="dialog" aria-modal="true" aria-labelledby="mobile-filters-title">{renderFilterPanel("dialog")}</div>
+      </Overlay>
+      {/* Persistent live region; stays active while a dialog is open. */}
+      <div className="toast-region" role="status" aria-live="polite" data-dialog-keep-active="">
+        {toast && <div className="toast" key={toast.id}><Check size={16} aria-hidden="true" /> {toast.message}</div>}
+      </div>
+    </>
   );
 }

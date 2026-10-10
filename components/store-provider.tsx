@@ -32,12 +32,22 @@ interface StoreContextValue {
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
+/** Upper limit for one cart line in the storefront. */
+export const MAX_CART_LINE_QUANTITY = 8;
+
+/**
+ * Only the visitor's own selections are kept in the browser (product ids and
+ * quantities). The catalog itself always comes from the current build
+ * (preview) or from the server (database mode).
+ */
 const BROWSER_STORAGE_KEYS = {
-  products: "apex.products.v1",
   cart: "apex.cart.v1",
   favorites: "apex.favorites.v1",
   compare: "apex.compare.v1",
 };
+
+/** Former full-catalog snapshot; removed on load (it hid catalog updates). */
+const LEGACY_PRODUCTS_STORAGE_KEY = "apex.products.v1";
 
 function readBrowserStorage<T>(key: string, fallbackValue: T): T {
   try {
@@ -50,11 +60,70 @@ function readBrowserStorage<T>(key: string, fallbackValue: T): T {
   }
 }
 
+function writeBrowserStorage(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode or a full quota: selections then live for this visit only.
+  }
+}
+
+function isStoredProduct(value: unknown): value is Product {
+  if (!value || typeof value !== "object") return false;
+  const product = value as Partial<Product>;
+  return (
+    typeof product.id === "string" &&
+    (product.kind === "tire" || product.kind === "wheel") &&
+    typeof product.brand === "string" &&
+    typeof product.model === "string" &&
+    typeof product.price === "number"
+  );
+}
+
+/** Products read from the legacy snapshot (kept for this page's lifetime). */
+let legacyProductsOfThisVisit: Product[] | null = null;
+
+/**
+ * Deletes the legacy catalog snapshot. Products from it that the visitor has
+ * in the cart, favorites or comparison but that are not in the current demo
+ * catalog (created in an older preview admin) are returned, so these
+ * selections stay visible during this visit. Idempotent: effects may run
+ * twice (React Strict Mode) and the key is already gone the second time.
+ */
+function takeLegacyReferencedProducts(referencedIds: Set<string>): Product[] {
+  if (legacyProductsOfThisVisit === null) {
+    legacyProductsOfThisVisit = [];
+    let serializedProducts: string | null = null;
+    try {
+      serializedProducts = window.localStorage.getItem(LEGACY_PRODUCTS_STORAGE_KEY);
+      if (serializedProducts !== null) {
+        window.localStorage.removeItem(LEGACY_PRODUCTS_STORAGE_KEY);
+      }
+    } catch {
+      serializedProducts = null;
+    }
+    try {
+      const storedProducts: unknown = serializedProducts ? JSON.parse(serializedProducts) : [];
+      const currentIds = new Set(seedProducts.map((product) => product.id));
+      if (Array.isArray(storedProducts)) {
+        legacyProductsOfThisVisit = storedProducts.filter(
+          (product): product is Product =>
+            isStoredProduct(product) && !currentIds.has(product.id),
+        );
+      }
+    } catch {
+      // Corrupted snapshot: nothing to keep.
+    }
+  }
+  return legacyProductsOfThisVisit.filter((product) => referencedIds.has(product.id));
+}
+
 /**
  * Provides interactive catalog, cart and authenticated user state.
  *
- * Browser storage is a preview convenience. Production cart ownership and prices
- * are established by server sessions and PostgreSQL.
+ * Browser storage keeps only the visitor's selections (cart in preview,
+ * favorites, comparison) as product ids and quantities. Production cart
+ * ownership and prices are established by server sessions and PostgreSQL.
  */
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
@@ -70,16 +139,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [cartError, setCartError] = useState("");
 
   useEffect(() => {
-    if (catalogIsPreview) {
-      setProducts(
-        readBrowserStorage(BROWSER_STORAGE_KEYS.products, seedProducts),
-      );
-    } else setProducts([]);
-    setCart(catalogIsPreview ? readBrowserStorage(BROWSER_STORAGE_KEYS.cart, []) : []);
-    setFavorites(
-      readBrowserStorage(BROWSER_STORAGE_KEYS.favorites, []),
+    const storedCart = catalogIsPreview
+      ? readBrowserStorage<CartLine[]>(BROWSER_STORAGE_KEYS.cart, [])
+      : [];
+    const storedFavorites = readBrowserStorage<string[]>(BROWSER_STORAGE_KEYS.favorites, []);
+    const storedCompare = readBrowserStorage<string[]>(BROWSER_STORAGE_KEYS.compare, []);
+    const legacyProducts = takeLegacyReferencedProducts(
+      new Set([
+        ...(Array.isArray(storedCart) ? storedCart.map((line) => line.productId) : []),
+        ...(Array.isArray(storedFavorites) ? storedFavorites : []),
+        ...(Array.isArray(storedCompare) ? storedCompare : []),
+      ]),
     );
-    setCompare(readBrowserStorage(BROWSER_STORAGE_KEYS.compare, []));
+    setProducts(catalogIsPreview ? [...seedProducts, ...legacyProducts] : []);
+    setCart(storedCart);
+    setFavorites(storedFavorites);
+    setCompare(storedCompare);
     setUser(null);
     setHydrated(true);
 
@@ -104,25 +179,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!hydrated) return;
-    if (catalogIsPreview) {
-      localStorage.setItem(
-        BROWSER_STORAGE_KEYS.products,
-        JSON.stringify(products),
-      );
-    }
-    if (catalogIsPreview) localStorage.setItem(
-      BROWSER_STORAGE_KEYS.cart,
-      JSON.stringify(cart),
-    );
-    localStorage.setItem(
-      BROWSER_STORAGE_KEYS.favorites,
-      JSON.stringify(favorites),
-    );
-    localStorage.setItem(
-      BROWSER_STORAGE_KEYS.compare,
-      JSON.stringify(compare),
-    );
-  }, [products, cart, favorites, compare, hydrated, catalogIsPreview]);
+    if (catalogIsPreview) writeBrowserStorage(BROWSER_STORAGE_KEYS.cart, cart);
+    writeBrowserStorage(BROWSER_STORAGE_KEYS.favorites, favorites);
+    writeBrowserStorage(BROWSER_STORAGE_KEYS.compare, compare);
+  }, [cart, favorites, compare, hydrated, catalogIsPreview]);
 
   useEffect(() => {
     if (!hydrated || catalogIsPreview) {
@@ -183,11 +243,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (line) {
         return current.map((item) =>
           item.productId === productId
-            ? { ...item, quantity: Math.min(8, item.quantity + quantity) }
+            ? { ...item, quantity: Math.min(MAX_CART_LINE_QUANTITY, item.quantity + quantity) }
             : item,
         );
       }
-      return [...current, { productId, quantity }];
+      return [...current, { productId, quantity: Math.min(MAX_CART_LINE_QUANTITY, quantity) }];
     });
   }, []);
 
@@ -196,7 +256,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       quantity <= 0
         ? current.filter((item) => item.productId !== productId)
         : current.map((item) =>
-            item.productId === productId ? { ...item, quantity: Math.min(8, quantity) } : item,
+            item.productId === productId ? { ...item, quantity: Math.min(MAX_CART_LINE_QUANTITY, quantity) } : item,
           ),
     );
   }, []);

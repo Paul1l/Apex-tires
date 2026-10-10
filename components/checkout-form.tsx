@@ -89,6 +89,7 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
         <input
           name="customerPhone"
           defaultValue={user?.phone || ""}
+          type="tel"
           inputMode="tel"
           autoComplete="tel"
           placeholder="+7 999 000-00-00"
@@ -115,7 +116,7 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
             }
           >
             {businessConfig.delivery.pickup.enabled && <option value="pickup">Самовывоз</option>}
-            {businessConfig.delivery.cityDelivery.enabled && <option value="courier">Доставка по {businessConfig.location.city}</option>}
+            {businessConfig.delivery.cityDelivery.enabled && <option value="courier">Доставка по {businessConfig.location.cityDative}</option>}
             {businessConfig.delivery.regionalDelivery.enabled && <option value="transport_company">Доставка транспортной компанией</option>}
           </select>
         ) : (

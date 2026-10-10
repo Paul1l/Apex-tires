@@ -30,9 +30,12 @@ export function FitmentRequestForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // React clears event.currentTarget once the handler yields at `await`,
+    // so keep the form element for the reset after a successful request.
+    const formElement = event.currentTarget;
     setSubmitting(true);
     setMessage("");
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
 
     try {
       const response = await fetch("/api/v1/fitment-requests", {
@@ -56,8 +59,8 @@ export function FitmentRequestForm({
         | { message?: string }
         | null;
       if (!response.ok) throw new Error(result?.message || "Заявку не удалось сохранить.");
-      setMessage("Заявка сохранена. Менеджер сможет обработать её в админке.");
-      event.currentTarget.reset();
+      formElement.reset();
+      setMessage("Заявка отправлена. Менеджер свяжется с вами по указанному телефону.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Заявку не удалось сохранить.");
     } finally {
@@ -69,16 +72,16 @@ export function FitmentRequestForm({
     <details className="fitment-request">
       <summary>Не нашли автомобиль?</summary>
       <form onSubmit={submit}>
-        <input name="make" defaultValue={initialMake} placeholder="Марка" required />
-        <input name="model" defaultValue={initialModel} placeholder="Модель" required />
-        <input name="year" defaultValue={initialYear} inputMode="numeric" placeholder="Год" />
-        <input name="generation" defaultValue={initialGeneration} placeholder="Поколение" />
-        <input name="modification" placeholder="Модификация" />
-        <input name="customerName" autoComplete="name" placeholder="Ваше имя" required />
-        <input name="customerPhone" autoComplete="tel" inputMode="tel" placeholder="+7 999 000-00-00" required />
+        <input name="make" defaultValue={initialMake} placeholder="Марка" aria-label="Марка автомобиля" required />
+        <input name="model" defaultValue={initialModel} placeholder="Модель" aria-label="Модель автомобиля" required />
+        <input name="year" defaultValue={initialYear} inputMode="numeric" placeholder="Год" aria-label="Год выпуска" />
+        <input name="generation" defaultValue={initialGeneration} placeholder="Поколение" aria-label="Поколение или кузов" />
+        <input name="modification" placeholder="Модификация" aria-label="Модификация" />
+        <input name="customerName" autoComplete="name" placeholder="Ваше имя" aria-label="Ваше имя" required />
+        <input name="customerPhone" type="tel" autoComplete="tel" inputMode="tel" placeholder="+7 999 000-00-00" aria-label="Телефон для связи" required />
         <label className="consent-row"><input name="personalDataConsent" type="checkbox" required /><span>Даю <Link href="/legal/personal-data-consent" target="_blank">согласие на обработку персональных данных</Link>.</span></label>
         <button className="secondary-button" disabled={submitting}>{submitting ? "Сохраняем…" : "Отправить запрос"}</button>
-        {message && <p role="status">{message}</p>}
+        <p role="status" aria-live="polite" className="fitment-request-message">{message}</p>
       </form>
     </details>
   );
