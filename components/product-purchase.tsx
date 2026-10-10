@@ -18,33 +18,55 @@ export function ProductPurchase({
   canAddToCart: boolean;
   className?: string;
 }) {
-  const { mergeCatalogProducts, addToCart, cartError } = useStore();
-  const [added, setAdded] = useState(false);
+  const { mergeCatalogProducts, addToCart, cart, cartError } = useStore();
+  // "added" is shown only after the cart is actually saved (or applied
+  // locally in preview); a failed save keeps the button available.
+  const [status, setStatus] = useState<"idle" | "saving" | "added" | "limit" | "error">("idle");
+  const [message, setMessage] = useState("");
   useEffect(() => mergeCatalogProducts([product]), [product, mergeCatalogProducts]);
+
+  const added = status === "added";
+  const statusText =
+    status === "added"
+      ? "Товар добавлен в корзину."
+      : status === "limit" || status === "error"
+        ? message
+        : "";
 
   return (
     <div className={className}>
       <button
         type="button"
         className="primary-button"
-        disabled={!canAddToCart || added}
-        onClick={() => {
-          addToCart(product.id);
-          setAdded(true);
+        disabled={!canAddToCart || added || status === "saving"}
+        aria-busy={status === "saving" || undefined}
+        onClick={async () => {
+          const quantityBefore = cart.find((line) => line.productId === product.id)?.quantity ?? 0;
+          setStatus("saving");
+          const result = await addToCart(product.id);
+          if (!result.ok) {
+            setMessage(result.message ?? "Корзина не сохранена. Попробуйте ещё раз.");
+            setStatus("error");
+          } else if (result.quantity <= quantityBefore) {
+            setMessage(`Больше добавить нельзя: в корзине уже ${result.quantity} шт.`);
+            setStatus("limit");
+          } else {
+            setStatus("added");
+          }
         }}
       >
         <ShoppingBag size={18} aria-hidden="true" />
         {added ? "Добавлено в корзину" : "В корзину"}
       </button>
-      {added && (
+      {(added || status === "limit") && (
         <Link className="secondary-button" href={CART_HREF} rel="nofollow">
           Открыть корзину
         </Link>
       )}
       <p role="status" aria-live="polite">
-        {added ? "Товар добавлен в корзину." : ""}
+        {statusText}
       </p>
-      {cartError && <p role="alert">{cartError}</p>}
+      {cartError && status !== "error" && <p role="alert">{cartError}</p>}
     </div>
   );
 }
