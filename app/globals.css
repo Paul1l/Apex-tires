@@ -5796,3 +5796,134 @@ footer {
   border-radius: 10px;
   background: var(--paper-2);
 }
+
+/* ------------------------------------------------------------------------
+ * T13c: audit fixes without a design change (existing tokens only).
+ * --------------------------------------------------------------------- */
+
+/* UX-15: required fields of the checkout form. */
+.required-mark {
+  margin-left: 2px;
+  color: var(--red);
+}
+
+.checkout-form > .summary-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* Field error under the consent text, not under the checkbox. */
+.consent-row > .checkout-error {
+  grid-column: 2;
+}
+
+/* QA-19: a failed sign-out message sits right above "Выйти из аккаунта",
+   with the side margins of the other panel content. */
+.account-drawer > .checkout-error {
+  margin: auto 24px 0;
+  padding-top: 24px;
+  text-align: center;
+}
+
+.account-drawer > .checkout-error + .logout-button {
+  margin-top: 4px;
+}
+
+/* UX-06: favourites and comparison in the phone menu, where the header
+   buttons are hidden (≤760px); the tablet header still shows them. */
+.main-nav .mobile-menu-collection {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .main-nav .mobile-menu-collection {
+    display: block;
+  }
+}
+
+/* A11Y-11: touch targets of at least 40×40 px on phones and touch screens.
+   The visible icons keep their size and position: the button box grows
+   around the drawn circle (card actions, menu button) or a transparent
+   ::after layer extends the clickable area (buttons with a visible frame
+   inside a dense layout). */
+@media (max-width: 760px), (pointer: coarse) {
+  .product-actions {
+    gap: 0;
+    margin: -5.5px -5.5px -5.5px 0;
+  }
+
+  .product-actions button {
+    position: relative;
+    z-index: 0;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+  }
+
+  .product-actions button::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 5.5px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.9);
+  }
+
+  .product-actions button.active::before {
+    border-color: var(--sand-dark);
+  }
+
+  .product-actions button:focus-visible {
+    outline-offset: -3.5px;
+  }
+
+  .quantity button,
+  .collection-actions button,
+  .filters-mobile-head button {
+    position: relative;
+  }
+
+  .modal-close::after,
+  .quantity button::after,
+  .collection-actions button::after,
+  .filters-mobile-head button::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 40px;
+    height: 40px;
+    transform: translate(-50%, -50%);
+  }
+
+  /* 34px buttons: a slightly wider gap keeps their 40px areas apart. */
+  .collection-actions {
+    gap: 7px;
+  }
+}
+
+@media (max-width: 760px) {
+  .product-actions {
+    margin: -6.5px -6.5px -6.5px 0;
+  }
+
+  .product-actions button::before {
+    inset: 6.5px;
+  }
+
+  .product-actions button:focus-visible {
+    outline-offset: -4.5px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .mobile-menu-button {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    margin-inline: -4px;
+  }
+}

@@ -331,7 +331,7 @@ export async function ProductDetailsPage({ slug: routeSlug, kind }: { slug: stri
         <div className={styles.footerInner}>
           <span>{businessConfig.brandName} · шины и диски в {businessConfig.location.cityPrepositional}</span>
           <nav aria-label="Информация для покупателей">
-            <Link href="/legal/delivery-payment-returns">Доставка и оплата</Link>
+            <Link href="/legal/delivery-payment-returns">Доставка, оплата и возврат</Link>
             <Link href="/legal/offer">Публичная оферта</Link>
             <Link href="/legal/requisites">Реквизиты</Link>
             <Link href="/contacts">Контакты</Link>

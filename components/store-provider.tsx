@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useRouter } from "next/navigation";
 import { seedProducts } from "@/lib/catalog-data";
 import { businessConfig } from "@/config/business";
 import type { CartLine, Product, UserProfile } from "@/lib/types";
@@ -207,6 +208,7 @@ function takeLegacyReferencedProducts(referencedIds: Set<string>): Product[] {
  * ownership and prices are established by server sessions and PostgreSQL.
  */
 export function StoreProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const catalogIsPreview = businessConfig.catalog.dataMode === "preview";
   const [products, setProducts] = useState<Product[]>(
     catalogIsPreview ? seedProducts : [],
@@ -563,6 +565,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         settleSaveWaiters(changeRevisionRef.current, false);
         commitCart([]);
         setUser(null);
+        // Drop the router's cached pages that were rendered for the signed-in
+        // user (e.g. /admin with the employee's name): Back then asks the
+        // server again instead of showing the cached page (QA-20).
+        router.refresh();
         return true;
       },
     }),
@@ -582,6 +588,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       mergeCatalogProducts,
       commitCart,
       settleSaveWaiters,
+      router,
     ],
   );
 

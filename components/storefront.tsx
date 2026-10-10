@@ -45,6 +45,13 @@ import { FitmentRequestForm } from "@/components/fitment-request-form";
 import { TireIllustration } from "@/components/tire-illustration";
 import { ProductPhoto } from "@/components/product-photo";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { useCatalogUrlState } from "@/components/use-catalog-url-state";
+import {
+  PRICE_SLIDER_MIN,
+  PRICE_SLIDER_STEP,
+  withoutOneTimeParameters,
+  type CatalogUrlState,
+} from "@/lib/catalog-url-state";
 import {
   buildCatalogSearchParams,
   CATALOG_MAX_PRICE_FILTER,
@@ -150,8 +157,13 @@ function normalizeVehicleSearchText(value: string): string {
 }
 
 /**
- * Searchable combobox used for vehicle makes and models. Clicking the field
- * opens the complete scrollable list; typing filters it immediately.
+ * Searchable combobox used for vehicle makes and models (WAI-ARIA APG
+ * "combobox with listbox popup", list autocomplete with manual selection).
+ * Clicking the field opens the complete scrollable list; typing filters it.
+ * Keyboard: ↓/↑ open the list and move the active option (focus stays in the
+ * field, the option is referenced by aria-activedescendant), Enter selects,
+ * Esc closes, Tab leaves the field and closes the list. Options are not Tab
+ * stops.
  */
 function SearchableVehicleSelect({
   id,
@@ -165,9 +177,13 @@ function SearchableVehicleSelect({
   onValueChange,
   onOptionSelect,
 }: SearchableVehicleSelectProps) {
-  const containerReference = useRef<HTMLDivElement>(null);
+  const popoverReference = useRef<HTMLDivElement>(null);
+  const summaryReference = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [filterIsActive, setFilterIsActive] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const listboxId = `${id}-options`;
+  const helperId = `${id}-helper`;
   const normalizedValue = normalizeVehicleSearchText(value);
   const exactOptionIsSelected = options.some(
     (option) => normalizeVehicleSearchText(option.name) === normalizedValue,
@@ -189,32 +205,56 @@ function SearchableVehicleSelect({
       );
     });
   }, [alphabetizedOptions, filterIsActive, normalizedValue]);
+  const listIsShown = isOpen && !disabled;
+  const shownOptions = loading ? [] : matchingOptions;
+  const activeOptionIndex =
+    listIsShown && activeIndex >= 0 && activeIndex < shownOptions.length ? activeIndex : -1;
+  const optionId = (index: number) => `${id}-option-${index}`;
 
-  useEffect(() => {
-    function closeWhenClickingOutside(event: MouseEvent) {
-      if (
-        containerReference.current &&
-        !containerReference.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-      }
-    }
+  /** Index of the option equal to the field value (the current choice), or -1. */
+  function selectedIndex(): number {
+    return shownOptions.findIndex(
+      (option) => normalizeVehicleSearchText(option.name) === normalizedValue,
+    );
+  }
 
-    document.addEventListener("mousedown", closeWhenClickingOutside);
-    return () =>
-      document.removeEventListener("mousedown", closeWhenClickingOutside);
-  }, []);
+  function openList(nextActiveIndex: number) {
+    setIsOpen(true);
+    setActiveIndex(nextActiveIndex);
+  }
+
+  function closeList() {
+    setIsOpen(false);
+    setActiveIndex(-1);
+  }
 
   function selectOption(option: SearchableVehicleOption) {
     onOptionSelect(option);
     setFilterIsActive(false);
-    setIsOpen(false);
+    closeList();
   }
+
+  // Keep the active option visible below the sticky "Вариантов: N" line.
+  useEffect(() => {
+    if (activeOptionIndex < 0) return;
+    const popover = popoverReference.current;
+    const option = document.getElementById(`${id}-option-${activeOptionIndex}`);
+    if (!popover || !option) return;
+    // offsetTop is relative to the popover (the positioned scroll container).
+    const stickyHeight = summaryReference.current?.offsetHeight ?? 0;
+    const optionTop = option.offsetTop;
+    const optionBottom = optionTop + option.offsetHeight;
+    if (optionTop - stickyHeight < popover.scrollTop) {
+      popover.scrollTop = optionTop - stickyHeight;
+    } else if (optionBottom > popover.scrollTop + popover.clientHeight) {
+      popover.scrollTop = optionBottom - popover.clientHeight;
+    }
+  }, [activeOptionIndex, id]);
 
   return (
     <div className="car-field">
       <label htmlFor={id}>{label}</label>
-      <div className="vehicle-search-select" ref={containerReference}>
+      <div className="vehicle-search-select">
         <input
           id={id}
           value={value}
@@ -223,72 +263,107 @@ function SearchableVehicleSelect({
           disabled={disabled}
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={isOpen}
-          aria-controls={`${id}-options`}
+          aria-expanded={listIsShown}
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionIndex >= 0 ? optionId(activeOptionIndex) : undefined}
+          aria-describedby={helperId}
           onFocus={(event) => {
-            setIsOpen(true);
             setFilterIsActive(false);
+            // The full list opens with the current choice highlighted.
+            setIsOpen(true);
+            setActiveIndex(
+              alphabetizedOptions.findIndex(
+                (option) => normalizeVehicleSearchText(option.name) === normalizedValue,
+              ),
+            );
             if (exactOptionIsSelected) {
               window.requestAnimationFrame(() => event.target.select());
             }
           }}
-          onClick={() => setIsOpen(true)}
+          onBlur={closeList}
+          onClick={() => {
+            if (!isOpen) openList(selectedIndex());
+          }}
           onChange={(event) => {
             onValueChange(event.target.value);
             setFilterIsActive(true);
-            setIsOpen(true);
+            openList(-1);
           }}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setIsOpen(false);
-            }
-            if (event.key === "ArrowDown") {
+            const count = shownOptions.length;
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
-              setIsOpen(true);
+              if (!listIsShown) {
+                // Alt+↓ only opens; ↓ / ↑ open on the current choice or the first / last option.
+                const current = selectedIndex();
+                openList(
+                  event.altKey ? -1 : current >= 0 ? current : event.key === "ArrowDown" ? 0 : count - 1,
+                );
+                return;
+              }
+              if (count === 0) return;
+              if (event.key === "ArrowDown") {
+                setActiveIndex(activeOptionIndex < 0 || activeOptionIndex >= count - 1 ? 0 : activeOptionIndex + 1);
+              } else {
+                setActiveIndex(activeOptionIndex <= 0 ? count - 1 : activeOptionIndex - 1);
+              }
+              return;
             }
-            if (
-              event.key === "Enter" &&
-              isOpen &&
-              matchingOptions.length === 1
-            ) {
+            if (event.key === "Enter" && listIsShown) {
+              const option =
+                activeOptionIndex >= 0
+                  ? shownOptions[activeOptionIndex]
+                  : count === 1
+                    ? shownOptions[0]
+                    : undefined;
+              if (option) {
+                event.preventDefault();
+                selectOption(option);
+              }
+              return;
+            }
+            if (event.key === "Escape" && listIsShown) {
+              // Handled here: an enclosing dialog must not close as well.
               event.preventDefault();
-              selectOption(matchingOptions[0]);
+              event.stopPropagation();
+              closeList();
             }
           }}
         />
-        {isOpen && !disabled && (
+        {listIsShown && (
           <div
+            ref={popoverReference}
             className="vehicle-options-popover"
-            id={`${id}-options`}
-            role="listbox"
+            // Clicks inside the list (options, scrollbar) keep focus in the field.
+            onMouseDown={(event) => event.preventDefault()}
           >
-            <div className="vehicle-options-summary">
+            <div className="vehicle-options-summary" ref={summaryReference} aria-hidden="true">
               {loading
                 ? "Загружаем список…"
                 : `Вариантов: ${matchingOptions.length}`}
             </div>
-            {!loading &&
-              matchingOptions.map((option) => (
+            <div id={listboxId} role="listbox" aria-label={label} aria-busy={loading || undefined}>
+              {shownOptions.map((option, index) => (
                 <button
                   key={option.id}
+                  id={optionId(index)}
                   type="button"
                   role="option"
-                  aria-selected={
-                    normalizeVehicleSearchText(option.name) === normalizedValue
-                  }
-                  onMouseDown={(event) => event.preventDefault()}
+                  tabIndex={-1}
+                  aria-selected={index === activeOptionIndex}
                   onClick={() => selectOption(option)}
                 >
                   {option.name}
                 </button>
               ))}
+            </div>
             {!loading && matchingOptions.length === 0 && (
               <p>Совпадений нет. Измените запрос и выберите вариант из списка.</p>
             )}
           </div>
         )}
       </div>
-      <small>{helperText}</small>
+      <small id={helperId}>{helperText}</small>
     </div>
   );
 }
@@ -963,6 +1038,12 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
   const [ordersMessage, setOrdersMessage] = useState("");
   const [logoutMessage, setLogoutMessage] = useState("");
   const titleId = useId();
+  const logoutMessageId = useId();
+
+  // A failed sign-out message belongs to that attempt: closing the panel clears it.
+  useEffect(() => {
+    if (!open) setLogoutMessage("");
+  }, [open]);
 
   useEffect(() => {
     if (!open || !user) return;
@@ -1032,10 +1113,11 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
             </div>
           )}
         </div>
-        {logoutMessage && <p className="form-message" role="alert">{logoutMessage}</p>}
+        {logoutMessage && <p className="checkout-error" id={logoutMessageId} role="alert">{logoutMessage}</p>}
         <button
           type="button"
           className="logout-button"
+          aria-describedby={logoutMessage ? logoutMessageId : undefined}
           onClick={async () => {
             setLogoutMessage("");
             if (await logout()) onClose();
@@ -1117,6 +1199,15 @@ function pickAvailableOption(value: string, options: number[]): string {
     : String(options[0]);
 }
 
+/** Filter select options plus the selected value when the facets lack it. */
+function withSelectedOption(options: number[], value: string): number[] {
+  if (!value || options.some((option) => String(option) === value)) return options;
+  return [...options, Number(value)].sort((a, b) => a - b);
+}
+
+/** Products per "Показать ещё" step in preview mode. */
+const PREVIEW_PAGE_SIZE = 8;
+
 function isModifiedClick(event: React.MouseEvent) {
   return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 }
@@ -1155,7 +1246,6 @@ export function Storefront({
   const [vehicleGenerationsLoading, setVehicleGenerationsLoading] = useState(false);
   const [fitmentLookupLoading, setFitmentLookupLoading] = useState(false);
   const [vehicleCatalogMessage, setVehicleCatalogMessage] = useState("");
-  const [visible, setVisible] = useState(8);
   const [quickView, setQuickView] = useState<Product | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
@@ -1169,13 +1259,15 @@ export function Storefront({
   const toastTimeoutReference = useRef<number | undefined>(undefined);
   const catalogFilterKey = JSON.stringify(filters);
   // The page number belongs to one set of filters: any filter change starts
-  // again from page 1 without an extra render or request.
+  // again from page 1 without an extra render or request. Database mode
+  // loads that page; preview shows `page` × 8 products ("Показать ещё").
   const [catalogPageState, setCatalogPageState] = useState({
     filterKey: catalogFilterKey,
     page: 1,
   });
   const catalogPage =
     catalogPageState.filterKey === catalogFilterKey ? catalogPageState.page : 1;
+  const visible = catalogPage * PREVIEW_PAGE_SIZE;
   const [serverCatalogProducts, setServerCatalogProducts] = useState<Product[]>(
     initialCatalog?.items ?? [],
   );
@@ -1194,10 +1286,44 @@ export function Storefront({
   // with the server-rendered page, so the browser does not request it again.
   const loadedCatalogQueryReference = useRef<string | null>(initialCatalog?.queryKey ?? null);
   const previousCatalogFiltersReference = useRef<CatalogFilters | null>(null);
+  // Filters taken from the address: loaded at once, without the typing pause.
+  const restoredCatalogFiltersReference = useRef<CatalogFilters | null>(null);
+
+  const restoreCatalogState = useCallback((state: CatalogUrlState) => {
+    restoredCatalogFiltersReference.current = state.filters;
+    setFilters(state.filters);
+    setCatalogPageState({ filterKey: JSON.stringify(state.filters), page: state.page });
+    if (state.filters.carMake && state.filters.carModel) {
+      // Show the selected vehicle in the selector too.
+      setCarBrand(state.filters.carMake);
+      setCarModel(state.filters.carModel);
+      if (state.filters.carYear) setCarYear(state.filters.carYear);
+      setCarGeneration(state.filters.carGeneration);
+    }
+  }, []);
+
+  useCatalogUrlState({
+    filters,
+    page: catalogPage,
+    defaultFilters,
+    ratingSortEnabled: businessConfig.catalog.ratingsEnabled,
+    onRestore: restoreCatalogState,
+  });
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("cart") === "open") setCartOpen(true);
+    let timeoutId: number | undefined;
+    if (new URLSearchParams(window.location.search).get("cart") === "open") {
+      setCartOpen(true);
+      // A one-time instruction (product page → "Открыть корзину"): drop it so
+      // a reload or a copied link does not open the cart again. Deferred until
+      // Next.js has set up its history handling after hydration.
+      timeoutId = window.setTimeout(
+        () => window.history.replaceState(null, "", withoutOneTimeParameters(window.location)),
+        0,
+      );
+    }
     if (window.location.hash === "#selector") setSelectorTab("car");
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   useEffect(() => {
@@ -1223,6 +1349,15 @@ export function Storefront({
   const heroWidthValue = pickAvailableOption(heroWidth, dimensions.widths);
   const heroProfileValue = pickAvailableOption(heroProfile, dimensions.profiles);
   const heroDiameterValue = pickAvailableOption(heroDiameter, dimensions.diameters);
+  // A brand or size from a shared link stays visible (and can be unchecked)
+  // even when the current facets do not list it.
+  const brandOptions = useMemo(
+    () => [...brands, ...filters.brands.filter((brand) => !brands.includes(brand))],
+    [brands, filters.brands],
+  );
+  const filterWidthOptions = withSelectedOption(dimensions.widths, filters.width);
+  const filterProfileOptions = withSelectedOption(dimensions.profiles, filters.profile);
+  const filterDiameterOptions = withSelectedOption(dimensions.diameters, filters.diameter);
 
   const catalogQueryKey = useMemo(
     () => buildCatalogSearchParams(filters, catalogPage).toString(),
@@ -1241,9 +1376,11 @@ export function Storefront({
       return;
     }
     // Wait for a pause only while the visitor types a search or drags the
-    // price slider; every other change loads immediately.
+    // price slider; every other change (and a state read from the address)
+    // loads immediately.
     const continuousInput =
       previousFilters !== null &&
+      restoredCatalogFiltersReference.current !== filters &&
       (previousFilters.query !== filters.query ||
         previousFilters.maxPrice !== filters.maxPrice);
     const abortController = new AbortController();
@@ -1492,13 +1629,18 @@ export function Storefront({
     scrollToCatalog();
   }
 
+  /** Back to the first page (or the first 8 products in preview). */
+  function resetCatalogPage() {
+    setCatalogPageState({ filterKey: "", page: 1 });
+  }
+
   function showCategory(kind: ProductKind) {
     setFilters((current) =>
       kind === "tire"
         ? { ...current, kind: "tire" }
         : { ...current, kind: "wheel", seasons: [], width: "", profile: "", studded: false, runflat: false },
     );
-    setVisible(8);
+    resetCatalogPage();
     scrollToCatalog();
   }
 
@@ -1513,7 +1655,18 @@ export function Storefront({
     showCategory(kind);
   }
 
-  /** "По автомобилю": every storefront page has the selector, so stay here. */
+  /**
+   * "Избранное" / "Сравнение" in the phone menu (the header buttons are
+   * hidden there): the menu closes and focus goes back to the menu button,
+   * so the drawer returns focus there when it closes.
+   */
+  function openCollectionFromMenu(mode: "favorites" | "compare") {
+    setMobileMenu(false);
+    mobileMenuButtonReference.current?.focus();
+    setCollection(mode);
+  }
+
+  /** "Подбор по автомобилю": every storefront page has the selector, so stay here. */
   function handleCarSelectorLinkClick(event: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>) {
     setMobileMenu(false);
     if (isModifiedClick(event) || !document.getElementById("selector")) return;
@@ -1620,7 +1773,7 @@ export function Storefront({
       }
       if (databaseCatalogEnabled) notify(`Проверяем применяемость для ${carBrand} ${carModel}`);
     }
-    setVisible(8);
+    resetCatalogPage();
     scrollToCatalog();
   }
 
@@ -1649,7 +1802,7 @@ export function Storefront({
 
   function resetFilters() {
     setFilters(defaultFilters);
-    setVisible(8);
+    resetCatalogPage();
   }
 
   function selectCategoryFilter(kind: CatalogFilters["kind"]) {
@@ -1694,7 +1847,7 @@ export function Storefront({
         )}
         <div className="filter-group">
           <p id={`${idPrefix}-price`}>Цена до <strong>{formatPrice(filters.maxPrice)}</strong></p>
-          <input className="price-range" type="range" min="10000" max={CATALOG_MAX_PRICE_FILTER} step="1000" value={filters.maxPrice} aria-label="Максимальная цена" aria-valuetext={formatPrice(filters.maxPrice)} onChange={(event) => setFilters((f) => ({ ...f, maxPrice: Number(event.target.value) }))} />
+          <input className="price-range" type="range" min={PRICE_SLIDER_MIN} max={CATALOG_MAX_PRICE_FILTER} step={PRICE_SLIDER_STEP} value={filters.maxPrice} aria-label="Максимальная цена" aria-valuetext={formatPrice(filters.maxPrice)} onChange={(event) => setFilters((f) => ({ ...f, maxPrice: Number(event.target.value) }))} />
           <div className="range-labels" aria-hidden="true"><span>10 000 ₽</span><span>60 000 ₽</span></div>
         </div>
         <div className="filter-group" role="group" aria-labelledby={`${idPrefix}-size`}>
@@ -1702,16 +1855,16 @@ export function Storefront({
           <div className="triple-select">
             {filters.kind !== "wheel" && (
               <>
-                <label><span>Ширина</span><select value={filters.width} onChange={(e) => setFilters((f) => ({ ...f, width: e.target.value }))}><option value="">Все</option>{dimensions.widths.map((v) => <option key={v}>{v}</option>)}</select></label>
-                <label><span>Профиль</span><select value={filters.profile} onChange={(e) => setFilters((f) => ({ ...f, profile: e.target.value }))}><option value="">Все</option>{dimensions.profiles.map((v) => <option key={v}>{v}</option>)}</select></label>
+                <label><span>Ширина</span><select value={filters.width} onChange={(e) => setFilters((f) => ({ ...f, width: e.target.value }))}><option value="">Все</option>{filterWidthOptions.map((v) => <option key={v}>{v}</option>)}</select></label>
+                <label><span>Профиль</span><select value={filters.profile} onChange={(e) => setFilters((f) => ({ ...f, profile: e.target.value }))}><option value="">Все</option>{filterProfileOptions.map((v) => <option key={v}>{v}</option>)}</select></label>
               </>
             )}
-            <label><span>Диаметр</span><select value={filters.diameter} onChange={(e) => setFilters((f) => ({ ...f, diameter: e.target.value }))}><option value="">Все</option>{dimensions.diameters.map((v) => <option key={v} value={v}>R{v}</option>)}</select></label>
+            <label><span>Диаметр</span><select value={filters.diameter} onChange={(e) => setFilters((f) => ({ ...f, diameter: e.target.value }))}><option value="">Все</option>{filterDiameterOptions.map((v) => <option key={v} value={v}>R{v}</option>)}</select></label>
           </div>
         </div>
         <div className="filter-group brand-filter" role="group" aria-labelledby={`${idPrefix}-brand`}>
           <p id={`${idPrefix}-brand`}>Бренд</p>
-          {brands.map((brand) => (
+          {brandOptions.map((brand) => (
             <label className="check-row" key={brand}><input type="checkbox" checked={filters.brands.includes(brand)} onChange={() => toggleMulti("brands", brand)} /><span>{brand}</span>{!databaseCatalogEnabled && <small>{products.filter((p) => p.brand === brand).length}</small>}</label>
           ))}
         </div>
@@ -1743,7 +1896,7 @@ export function Storefront({
               ? "Предварительная версия · реквизиты, цены и наличие требуют подтверждения"
               : businessConfig.brandName}
           </div>
-          <div className="utility-links"><Link href="/contacts">Контакты</Link><Link href="/legal/delivery-payment-returns">Условия покупки</Link></div>
+          <div className="utility-links"><Link href="/contacts">Контакты</Link><Link href="/legal/delivery-payment-returns">Доставка, оплата и возврат</Link></div>
         </div>
       </div>
       <header className="site-header">
@@ -1766,9 +1919,12 @@ export function Storefront({
           <nav id="main-navigation" ref={mainNavigationReference} className={mobileMenu ? "main-nav open" : "main-nav"} aria-label="Основное меню">
             <Link href="/shiny#catalog" aria-current={pathname === "/shiny" ? "page" : undefined} onClick={(event) => handleCategoryLinkClick(event, "tire")}>Шины</Link>
             <Link href="/diski#catalog" aria-current={pathname === "/diski" ? "page" : undefined} onClick={(event) => handleCategoryLinkClick(event, "wheel")}>Диски</Link>
-            <Link href="/#selector" onClick={handleCarSelectorLinkClick}>По автомобилю</Link>
+            <Link href="/#selector" onClick={handleCarSelectorLinkClick}>Подбор по автомобилю</Link>
             {businessConfig.services.tireService && <a href="#services" onClick={() => setMobileMenu(false)}>Шиномонтаж</a>}
             <Link href="/contacts" onClick={() => setMobileMenu(false)}>Контакты</Link>
+            {/* Phone layout only: the header has no room for these two buttons there. */}
+            <button type="button" className="mobile-menu-collection" aria-haspopup="dialog" onClick={() => openCollectionFromMenu("favorites")}>Избранное ({favorites.length})</button>
+            <button type="button" className="mobile-menu-collection" aria-haspopup="dialog" onClick={() => openCollectionFromMenu("compare")}>Сравнение ({compare.length})</button>
           </nav>
           <div className="header-contact">
             {businessConfig.workingHours && <span>{businessConfig.workingHours}</span>}
@@ -2100,7 +2256,7 @@ export function Storefront({
                     ))}
                   </div>
                   {!databaseCatalogEnabled && visible < filteredProducts.length && (
-                    <button type="button" className="load-more" onClick={() => setVisible((n) => n + 8)}>Показать ещё <Plus size={17} aria-hidden="true" /></button>
+                    <button type="button" className="load-more" onClick={() => setCatalogPageState({ filterKey: catalogFilterKey, page: catalogPage + 1 })}>Показать ещё <Plus size={17} aria-hidden="true" /></button>
                   )}
                   {databaseCatalogEnabled && serverCatalogTotalPages > 1 && (
                     <nav className="catalog-pagination" aria-label="Страницы каталога">
@@ -2171,7 +2327,7 @@ export function Storefront({
             <Link href="/#selector" onClick={handleCarSelectorLinkClick}>Подбор по автомобилю</Link>
             {businessConfig.services.tireService && <a href="#services">Шиномонтаж</a>}
           </div>
-          <div><h2 className="footer-title">Покупателям</h2><Link href="/legal/delivery-payment-returns">Доставка и оплата</Link><Link href="/legal/delivery-payment-returns">Гарантия и возврат</Link><Link href="/legal/offer">Публичная оферта</Link><Link href="/legal/terms">Правила пользования</Link></div>
+          <div><h2 className="footer-title">Покупателям</h2><Link href="/legal/delivery-payment-returns">Доставка, оплата и возврат</Link><Link href="/legal/offer">Публичная оферта</Link><Link href="/legal/terms">Правила пользования</Link></div>
           <div><h2 className="footer-title">Компания</h2><Link href="/contacts">Контакты</Link><Link href="/legal/requisites">Реквизиты</Link><Link href="/legal/privacy">Персональные данные</Link><button type="button" onClick={openCookieSettings}>Настройки cookie</button></div>
         </div>
         <div className="container footer-bottom"><span>© 2026 {businessConfig.brandName}</span><Link href="/legal">Правовая информация</Link><Link href="/legal/privacy">Политика конфиденциальности</Link></div>
