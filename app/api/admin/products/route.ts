@@ -14,7 +14,8 @@ export async function GET(request: Request) {
     });
     await requireUserRole(request, ["manager", "admin"]);
     const query = parseCatalogQuery(new URL(request.url).searchParams);
-    const result = await createApplicationServices().catalogService.getCatalogPage(query);
+    // Staff view: stored stock, reserves and 1C identifiers.
+    const result = await createApplicationServices().catalogService.getAdminCatalogPage(query);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     const safe = toSafeError(error);

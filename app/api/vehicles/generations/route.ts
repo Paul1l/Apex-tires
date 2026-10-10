@@ -4,6 +4,7 @@ import {
   createApplicationServices,
   databaseIsConfigured,
 } from "@/server/bootstrap/application-services";
+import { VEHICLE_CACHE_CONTROL } from "@/server/services/vehicle-reference-service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
   if (!databaseIsConfigured()) {
     return NextResponse.json(
       { ok: false, code: "FITMENT_STORAGE_NOT_CONFIGURED", message: "База применяемости пока не подключена." },
-      { status: 503 },
+      { status: 503, headers: { "Cache-Control": VEHICLE_CACHE_CONTROL.error } },
     );
   }
   try {
@@ -38,16 +39,19 @@ export async function GET(request: NextRequest) {
         model,
         year,
       });
-    return NextResponse.json({
-      ok: true,
-      source: "postgresql",
-      items: generations.map((name) => ({ id: name.toLocaleLowerCase("ru"), name })),
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        source: "postgresql",
+        items: generations.map((name) => ({ id: name.toLocaleLowerCase("ru"), name })),
+      },
+      { headers: { "Cache-Control": VEHICLE_CACHE_CONTROL.database } },
+    );
   } catch (error) {
     applicationLogger.error({ error }, "Vehicle generation lookup failed");
     return NextResponse.json(
       { ok: false, code: "FITMENT_STORAGE_UNAVAILABLE", message: "Поколения временно недоступны." },
-      { status: 503 },
+      { status: 503, headers: { "Cache-Control": VEHICLE_CACHE_CONTROL.error } },
     );
   }
 }

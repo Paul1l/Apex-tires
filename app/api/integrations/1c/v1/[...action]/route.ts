@@ -20,6 +20,7 @@ import {
   stockSchema,
 } from "@/server/validators/one-c-schemas";
 import type { SynchronizationResponse } from "@/server/repositories/integration-sync-log-repository";
+import { revalidateStorefrontCatalog } from "@/server/cache/storefront-revalidation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,6 +38,20 @@ function jsonWithNoStore(body: unknown, status = 200): NextResponse {
 
 function synchronizationResponse(result: SynchronizationResponse): NextResponse {
   return jsonWithNoStore(result, result.failed > 0 ? 207 : 200);
+}
+
+/**
+ * Response for a batch that changes what the catalog pages show (products,
+ * prices, stock). A newly processed batch resets the cached storefront pages;
+ * a repeated idempotencyKey changed nothing. A failed batch is rolled back
+ * and throws before this point.
+ */
+function catalogSynchronizationResponse(
+  entityType: "products" | "prices" | "stocks",
+  result: SynchronizationResponse,
+): NextResponse {
+  if (!result.duplicate) revalidateStorefrontCatalog(`1c-${entityType}`);
+  return synchronizationResponse(result);
 }
 
 async function validateIntegrationRequest(request: Request) {
@@ -134,7 +149,8 @@ export async function POST(request: Request, context: RouteContext) {
     switch (action) {
       case "products":
       case "products/batch":
-        return synchronizationResponse(
+        return catalogSynchronizationResponse(
+          "products",
           await services.synchronizationService.synchronizeProducts(
             envelope,
             productSchema,
@@ -142,7 +158,8 @@ export async function POST(request: Request, context: RouteContext) {
         );
       case "prices":
       case "prices/batch":
-        return synchronizationResponse(
+        return catalogSynchronizationResponse(
+          "prices",
           await services.synchronizationService.synchronizePrices(
             envelope,
             priceSchema,
@@ -150,7 +167,8 @@ export async function POST(request: Request, context: RouteContext) {
         );
       case "stocks":
       case "stocks/batch":
-        return synchronizationResponse(
+        return catalogSynchronizationResponse(
+          "stocks",
           await services.synchronizationService.synchronizeStocks(
             envelope,
             stockSchema,
