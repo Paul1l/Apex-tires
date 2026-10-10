@@ -1,14 +1,17 @@
 import type { Pool } from "pg";
-import { businessConfig, getEnabledDeliveryMethods } from "../../config/business";
+import { businessConfig, getEnabledDeliveryMethods, type AvailabilityDisplayMode } from "../../config/business";
 import type { DeliveryMethod } from "../../lib/types";
 import { withTransaction } from "../database/postgres-client";
 import {
+  InsufficientStockError,
   OrderRepository,
+  type CheckoutProductRow,
   type CreatedOrderRow,
   type NormalizedOrderItem,
   type StockReservation,
 } from "../repositories/order-repository";
 import { ApplicationError } from "../utils/errors";
+import { formatProductDisplayName } from "../utils/product-title";
 import {
   MAXIMUM_ORDER_PRODUCT_QUANTITY,
   type CreateOrderInput,
@@ -43,6 +46,37 @@ export interface OrderServiceDependencies {
 }
 
 const DEFAULT_MAXIMUM_ACTIVE_RESERVATIONS_PER_CONTACT = 3;
+
+/**
+ * Message for a stock shortage. The exact quantity is shown only when the
+ * owner shows exact stock in the catalog (`exact`); other display modes keep
+ * quantities private. Internal identifiers (SKU, UUID) are never shown.
+ */
+export function formatInsufficientStockMessage(
+  productName: string,
+  availableQuantity: number,
+  displayMode: AvailabilityDisplayMode = businessConfig.catalog.availabilityDisplayMode,
+): string {
+  const available = Math.max(0, Math.floor(availableQuantity));
+  if (available === 0) {
+    return `Товар «${productName}» закончился. Удалите его из корзины.`;
+  }
+  return displayMode === "exact"
+    ? `Товара «${productName}» сейчас в наличии только ${available} шт. Уменьшите количество в корзине.`
+    : `Товара «${productName}» нет в нужном количестве. Уменьшите количество в корзине или свяжитесь с нами.`;
+}
+
+/** 409 with the catalog name (brand, model, size). */
+function createInsufficientStockError(
+  product: CheckoutProductRow,
+  availableQuantity: number,
+): ApplicationError {
+  return new ApplicationError({
+    code: "INSUFFICIENT_STOCK",
+    message: formatInsufficientStockMessage(formatProductDisplayName(product), availableQuantity),
+    statusCode: 409,
+  });
+}
 
 export class OrderService {
   private readonly pool: Pool;
@@ -164,16 +198,12 @@ export class OrderService {
         if (product.amount_kopecks === null) {
           throw new ApplicationError({
             code: "PRICE_UNAVAILABLE",
-            message: `Для товара ${product.sku} не задана актуальная цена.`,
+            message: `Для товара «${formatProductDisplayName(product)}» сейчас нет актуальной цены. Удалите его из корзины или уточните у менеджера.`,
             statusCode: 409,
           });
         }
         if (Number(product.available) < item.quantity) {
-          throw new ApplicationError({
-            code: "INSUFFICIENT_STOCK",
-            message: `Недостаточный остаток товара ${product.sku}.`,
-            statusCode: 409,
-          });
+          throw createInsufficientStockError(product, Number(product.available));
         }
 
         const unitPriceKopecks = Number(product.amount_kopecks);
@@ -198,11 +228,21 @@ export class OrderService {
 
       const stockReservations: StockReservation[] = [];
       for (const item of normalizedItems) {
-        stockReservations.push(...await this.orderRepository.reserveStock(
-          database,
-          item.productId,
-          item.quantity,
-        ));
+        try {
+          stockReservations.push(...await this.orderRepository.reserveStock(
+            database,
+            item.productId,
+            item.quantity,
+          ));
+        } catch (error) {
+          // Stock changed after the availability check (e.g. a concurrent 1C
+          // update): a 409 for the customer, not a 500.
+          const product = productsById.get(item.productId);
+          if (error instanceof InsufficientStockError && product) {
+            throw createInsufficientStockError(product, error.availableQuantity);
+          }
+          throw error;
+        }
       }
 
       return this.orderRepository.create(database, {

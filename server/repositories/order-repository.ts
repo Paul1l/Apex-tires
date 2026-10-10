@@ -18,10 +18,32 @@ export interface CheckoutProductRow {
   id: string;
   sku: string;
   name: string;
+  /** Catalog title parts (brand, model, size) for customer-facing messages. */
+  kind: "tire" | "wheel";
+  brand: string;
+  model: string;
+  width: number;
+  profile: number;
+  diameter: number;
+  pcd: string | null;
   is_active: boolean;
   amount_kopecks: number | string | null;
   available: number;
   product_attributes?: JsonValue;
+}
+
+/**
+ * Stock changed between the availability check and the reservation (for
+ * example a concurrent 1C/CSV stock update). Mapped to a 409 by OrderService.
+ */
+export class InsufficientStockError extends Error {
+  constructor(
+    readonly productId: string,
+    readonly availableQuantity: number,
+  ) {
+    super("INSUFFICIENT_STOCK");
+    this.name = "InsufficientStockError";
+  }
 }
 
 export interface NormalizedOrderItem {
@@ -267,6 +289,17 @@ export class OrderRepository {
          products.sku,
          products.name,
          products.is_active,
+         products.kind,
+         products.brand,
+         products.model,
+         COALESCE((SELECT tire_specs.width FROM tire_specs WHERE tire_specs.product_id = products.id), products.width)::integer AS width,
+         COALESCE((SELECT tire_specs.profile FROM tire_specs WHERE tire_specs.product_id = products.id), products.profile)::integer AS profile,
+         COALESCE(
+           (SELECT tire_specs.diameter FROM tire_specs WHERE tire_specs.product_id = products.id),
+           (SELECT wheel_specs.diameter FROM wheel_specs WHERE wheel_specs.product_id = products.id),
+           products.diameter
+         )::integer AS diameter,
+         products.pcd,
          jsonb_build_object('kind', products.kind, 'condition', products.condition,
            'brand', products.brand, 'model', products.model,
            'tire', (SELECT to_jsonb(t) - 'product_id' FROM tire_specs t WHERE t.product_id=products.id),
@@ -448,6 +481,14 @@ export class OrderRepository {
       [productId],
     );
     let remainingQuantity = requestedQuantity;
+    const availableQuantity = inventoryResult.rows.reduce(
+      (sum, inventory) => sum + inventory.quantity - inventory.reserved,
+      0,
+    );
+    if (availableQuantity < requestedQuantity) {
+      // Checked before any UPDATE: nothing is reserved for this product.
+      throw new InsufficientStockError(productId, availableQuantity);
+    }
 
     for (const inventory of inventoryResult.rows) {
       if (remainingQuantity === 0) break;
@@ -464,7 +505,7 @@ export class OrderRepository {
     }
 
     if (remainingQuantity > 0) {
-      throw new Error("INSUFFICIENT_STOCK");
+      throw new InsufficientStockError(productId, requestedQuantity - remainingQuantity);
     }
     return allocations;
   }

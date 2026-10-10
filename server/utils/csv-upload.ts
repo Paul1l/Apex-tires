@@ -33,6 +33,14 @@ export async function readCsvUpload(request: Request): Promise<{
       mode: request.headers.get("x-import-mode") === "full" ? "full" : "incremental",
     };
   }
+  if (!contentType.startsWith("multipart/form-data")) {
+    throw new ApplicationError({
+      code: "UNSUPPORTED_MEDIA_TYPE",
+      message:
+        "Загрузите CSV-файл: тело text/csv или форма multipart/form-data с полем file.",
+      statusCode: 415,
+    });
+  }
   if (contentLength > MAXIMUM_MULTIPART_BYTES) {
     throw new ApplicationError({
       code: "CSV_MULTIPART_TOO_LARGE",
@@ -57,7 +65,17 @@ export async function readCsvUpload(request: Request): Promise<{
       chunks.push(new Uint8Array(value));
     }
   } finally { reader.releaseLock(); }
-  const formData = await new Response(new Blob(chunks), { headers: { "Content-Type": originalContentType } }).formData();
+  let formData: FormData;
+  try {
+    formData = await new Response(new Blob(chunks), { headers: { "Content-Type": originalContentType } }).formData();
+  } catch {
+    // Missing boundary or a broken body: a client error, not a 500.
+    throw new ApplicationError({
+      code: "INVALID_MULTIPART",
+      message: "Не удалось прочитать форму с файлом. Выберите CSV-файл и повторите загрузку.",
+      statusCode: 422,
+    });
+  }
   const file = formData.get("file");
   if (!(file instanceof File) || !file.name.toLocaleLowerCase("ru").endsWith(".csv")) {
     throw new ApplicationError({

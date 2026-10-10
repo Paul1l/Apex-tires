@@ -7,8 +7,7 @@ import { readSecurityLimits } from "@/server/config/security-limits";
 import { applicationLogger } from "@/server/types/common";
 import { ApplicationError, toSafeError } from "@/server/utils/errors";
 import { readJsonRequest } from "@/server/utils/http";
-import { createOrderSchema } from "@/server/validators/order-schemas";
-import { formatValidationIssues } from "@/server/validators/one-c-schemas";
+import { validateCreateOrder } from "@/server/validators/order-schemas";
 import { getAuthenticatedUser } from "@/server/security/request-auth";
 import { requireSameOrigin } from "@/server/security/request-origin";
 import { clientIpRateLimitKey, getClientIp } from "@/server/security/client-ip";
@@ -45,15 +44,13 @@ export async function POST(request: Request) {
       { message: TOO_MANY_ORDERS_MESSAGE },
     );
 
-    const validationResult = createOrderSchema.safeParse(
-      await readJsonRequest(request, 100_000),
-    );
-    if (!validationResult.success) {
+    const validationResult = validateCreateOrder(await readJsonRequest(request, 100_000));
+    if (!validationResult.success || !validationResult.data) {
       throw new ApplicationError({
         code: "VALIDATION_ERROR",
-        message: "Проверьте контактные данные, способ получения и состав заказа.",
+        message: validationResult.message,
         statusCode: 422,
-        details: formatValidationIssues(validationResult.error),
+        details: validationResult.details,
       });
     }
 

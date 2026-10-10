@@ -40,6 +40,37 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 
 Сначала создаётся резервная копия БД. После выкладки проверяются `/api/health`, каталог, вход, создание тестового заказа и журналы контейнеров.
 
+## Проверка конфигурации при старте
+
+При запуске `next start` (`instrumentation.ts`) приложение проверяет окружение
+и пишет найденные проблемы в журнал контейнера одной строкой на проблему:
+
+```text
+[config] ОШИБКА (OTP_CODE_PEPPER): OTP_CODE_PEPPER не задан: гостевая корзина, вход и сессии отвечают 503 ...
+```
+
+Проверяются: `DATABASE_URL` для сборки в режиме database, `OTP_CODE_PEPPER`
+(без него корзина, вход и сессии отвечают 503), корректность backend-переменных
+(`readEnvironment`), защитных лимитов и `TRUSTED_PROXY` (без него в production —
+предупреждение). Значения переменных в журнал не пишутся. Сервер при этом не
+останавливается, чтобы preview, демо на Cloudflare и сборка Docker-образа без
+env работали как прежде; если хука нет, та же проверка выполняется при первом
+запросе к БД. После выкладки:
+
+```bash
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml logs app | grep '\[config\]'
+```
+
+Пустой вывод означает, что проблем не найдено.
+
+## Яндекс Метрика на VDS
+
+`YANDEX_METRIKA_COUNTER_ID` задаётся в `.env.production` и передаётся в
+контейнер (`deploy/docker-compose.production.yml`); `/api/public-config` читает
+его из окружения процесса. Интеграция с wrangler (`initOpenNextCloudflareForDev`)
+включается только в `next dev`, поэтому в production-контейнере не запускается
+`workerd`. На Cloudflare значение берётся из vars/secrets worker.
+
 ## Резервные копии
 
 `deploy/scripts/backup-postgres.sh` создаёт custom-format backup для `pg_restore` и удаляет локальные копии старше заданного срока. Скрипт запускается cron ежедневно. Минимум одна дополнительная зашифрованная копия должна уходить на независимое российское object storage. Восстановление необходимо проверять регулярно на отдельной БД.

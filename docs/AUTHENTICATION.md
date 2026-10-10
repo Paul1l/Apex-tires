@@ -41,7 +41,7 @@ Version 4 и отправляет его на endpoint `https://postbox.cloud.ya
 
 | Переменная | Назначение |
 | --- | --- |
-| `OTP_CODE_PEPPER` | секрет HMAC для кодов, контактов и сессий |
+| `OTP_CODE_PEPPER` | секрет HMAC для кодов, контактов и сессий; без него в режиме database вход, сессии и гостевая корзина отвечают 503, а при старте сервера в журнале появляется `[config] ОШИБКА (OTP_CODE_PEPPER)` |
 | `YANDEX_POSTBOX_ACCESS_KEY_ID` | ID статического ключа сервисного аккаунта |
 | `YANDEX_POSTBOX_SECRET_ACCESS_KEY` | секретная часть статического ключа |
 | `YANDEX_POSTBOX_FROM_EMAIL` | верифицированный адрес отправителя |

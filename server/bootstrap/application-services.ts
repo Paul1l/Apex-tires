@@ -32,6 +32,7 @@ import { LocalFitmentProvider } from "../integrations/fitment/local-fitment-prov
 import { applicationLogger } from "../types/common";
 import { businessConfig } from "../../config/business";
 import { readSecurityLimits } from "../config/security-limits";
+import { reportRuntimeConfigurationOnce } from "../config/runtime-configuration";
 import {
   InMemoryRateLimiter,
   type RateLimiter,
@@ -69,10 +70,14 @@ function getPostgresPool(environment: ServerEnvironment): Pool {
 }
 
 export function databaseIsConfigured(): boolean {
+  // Fallback for runtimes without instrumentation.ts: name a missing
+  // OTP_CODE_PEPPER or invalid env once in the log instead of silent 503s.
+  reportRuntimeConfigurationOnce();
   return Boolean(process.env.DATABASE_URL);
 }
 
 export function authenticationSessionsAreConfigured(): boolean {
+  reportRuntimeConfigurationOnce();
   return Boolean(process.env.DATABASE_URL && process.env.OTP_CODE_PEPPER);
 }
 

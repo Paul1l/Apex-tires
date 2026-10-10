@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import { businessConfig } from "./config/business";
 import { assertProductionBusinessConfig } from "./config/business-validation";
@@ -48,6 +49,14 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
-
-initOpenNextCloudflareForDev();
+// Wrangler bindings for local development only (`next dev`), as documented by
+// @opennextjs/cloudflare. Calling it during `next build` or `next start` would
+// spawn workerd inside the production Node.js process (VDS) and make
+// getCloudflareContext return wrangler's env instead of the container env.
+// The Cloudflare worker gets its context from the OpenNext worker entrypoint.
+export default function createNextConfig(phase: string): NextConfig {
+  if (phase === PHASE_DEVELOPMENT_SERVER) {
+    void initOpenNextCloudflareForDev();
+  }
+  return nextConfig;
+}

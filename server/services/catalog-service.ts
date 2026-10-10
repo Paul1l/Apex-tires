@@ -3,22 +3,10 @@ import type { Product, ProductDetails } from "../../lib/types";
 import { ProductRepository, type CatalogProductRow } from "../repositories/product-repository";
 import type { CatalogQuery } from "../validators/catalog-query-schema";
 import { normalizeCatalogSearch } from "./catalog-search-parser";
+import { buildProductSubtitle } from "../utils/product-title";
 
 function kopecksToRubles(value: number | string): number {
   return Number(value) / 100;
-}
-
-function buildProductSubtitle(row: {
-  kind: "tire" | "wheel";
-  width: number;
-  profile: number;
-  diameter: number;
-  pcd: string | null;
-}): string {
-  if (row.kind === "tire") {
-    return `${row.width}/${row.profile} R${row.diameter}`;
-  }
-  return [`R${row.diameter}`, row.pcd].filter(Boolean).join(" ");
 }
 
 function mapCatalogProduct(row: CatalogProductRow): Product {

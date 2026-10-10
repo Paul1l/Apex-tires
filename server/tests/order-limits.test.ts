@@ -47,7 +47,10 @@ function createService(options: { activeOrders?: number; maximumActiveReservatio
       return options.activeOrders ?? 0;
     },
     async lockProductsForCheckout(_database, ids) {
-      return ids.map((id) => ({ id, sku: `SKU-${id.slice(0, 4)}`, name: "Шина", is_active: true, amount_kopecks: 1_000, available: 1_000 }));
+      return ids.map((id) => ({
+        id, sku: `SKU-${id.slice(0, 4)}`, name: "Шина", kind: "tire" as const, brand: "Ikon", model: "Nordman 8",
+        width: 205, profile: 55, diameter: 16, pcd: null, is_active: true, amount_kopecks: 1_000, available: 1_000,
+      }));
     },
     async reserveStock() { return []; },
     async getDeliveryPriceKopecks() { return 0; },
