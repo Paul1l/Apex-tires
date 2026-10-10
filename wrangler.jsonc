@@ -8,7 +8,8 @@
     "global_fetch_strictly_public"
   ],
   "vars": {
-    "NEXT_PRIVATE_MINIMAL_MODE": "1"
+    "NEXT_PRIVATE_MINIMAL_MODE": "1",
+    "TRUSTED_PROXY": "cloudflare"
   },
   "assets": {
     "directory": ".open-next/assets",

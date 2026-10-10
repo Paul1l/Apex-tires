@@ -9,6 +9,9 @@ import { createSecureDigest, generateOpaqueToken } from "@/lib/auth/security";
 import { GUEST_CART_COOKIE_NAME, SESSION_LIFETIME_SECONDS } from "@/lib/auth/session";
 import type { PersistedCartLine } from "@/server/repositories/cart-repository";
 import { requireSameOrigin } from "@/server/security/request-origin";
+import { readSecurityLimits } from "@/server/config/security-limits";
+import { clientIpRateLimitKey, getClientIp } from "@/server/security/client-ip";
+import { enforceRateLimit } from "@/server/security/rate-limit-policies";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,6 +26,7 @@ function readCookie(request: Request, name: string): string | null {
 async function executeCartOperation(
   request: Request,
   operation: (owner: { userId?: string; anonymousHash?: string }) => Promise<PersistedCartLine[]>,
+  options: { anonymousWrite?: boolean } = {},
 ) {
   try {
     requireSameOrigin(request);
@@ -45,6 +49,16 @@ async function executeCartOperation(
       const response = NextResponse.json({ ok: true, items, products }, { headers: { "Cache-Control": "private, no-store" } });
       if (existingGuestToken) response.cookies.delete(GUEST_CART_COOKIE_NAME);
       return response;
+    }
+    if (options.anonymousWrite) {
+      // Every anonymous write may create a new guest cart (the guest token is
+      // client-chosen), so writes are limited per client address.
+      await enforceRateLimit(
+        services.rateLimiter,
+        readSecurityLimits().guestCartWrites.perIp,
+        clientIpRateLimitKey(getClientIp(request)),
+        { message: "Слишком много изменений корзины." },
+      );
     }
     const guestToken = existingGuestToken ?? generateOpaqueToken();
     const anonymousHash = await createSecureDigest(securitySecret, guestToken);
@@ -83,9 +97,12 @@ export async function PUT(request: Request) {
     const safeError = toSafeError(error);
     return NextResponse.json(safeError.body, { status: safeError.statusCode });
   }
-  return executeCartOperation(request, ({ userId, anonymousHash }) =>
-    userId
-      ? createApplicationServices().cartService.replaceCart(userId, payload.items)
-      : createApplicationServices().cartService.replaceAnonymousCart(anonymousHash as string, payload.items),
+  return executeCartOperation(
+    request,
+    ({ userId, anonymousHash }) =>
+      userId
+        ? createApplicationServices().cartService.replaceCart(userId, payload.items)
+        : createApplicationServices().cartService.replaceAnonymousCart(anonymousHash as string, payload.items),
+    { anonymousWrite: true },
   );
 }

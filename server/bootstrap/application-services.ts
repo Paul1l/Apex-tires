@@ -31,6 +31,12 @@ import { YandexPostboxNotificationProvider } from "../integrations/notifications
 import { LocalFitmentProvider } from "../integrations/fitment/local-fitment-provider";
 import { applicationLogger } from "../types/common";
 import { businessConfig } from "../../config/business";
+import { readSecurityLimits } from "../config/security-limits";
+import {
+  InMemoryRateLimiter,
+  type RateLimiter,
+} from "../security/fixed-window-rate-limiter";
+import { PostgresRateLimiter } from "../security/postgres-rate-limiter";
 
 interface ApplicationServices {
   environment: ServerEnvironment;
@@ -47,10 +53,12 @@ interface ApplicationServices {
   cartService: CartService;
   notificationService: NotificationService;
   adminOrderService: AdminOrderService;
+  rateLimiter: RateLimiter;
 }
 
 declare global {
   var apexPostgresPool: Pool | undefined;
+  var apexInMemoryRateLimiter: InMemoryRateLimiter | undefined;
 }
 
 function getPostgresPool(environment: ServerEnvironment): Pool {
@@ -68,8 +76,20 @@ export function authenticationSessionsAreConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL && process.env.OTP_CODE_PEPPER);
 }
 
+/**
+ * Shared limiter for route handlers: PostgreSQL when the database is
+ * configured, otherwise a bounded process-local fallback (preview mode and
+ * local development without a database).
+ */
+export function getRateLimiter(): RateLimiter {
+  if (databaseIsConfigured()) return createApplicationServices().rateLimiter;
+  globalThis.apexInMemoryRateLimiter ??= new InMemoryRateLimiter();
+  return globalThis.apexInMemoryRateLimiter;
+}
+
 export function createApplicationServices(): ApplicationServices {
   const environment = readEnvironment();
+  const securityLimits = readSecurityLimits();
   const pool = getPostgresPool(environment);
   const productRepository = new ProductRepository();
   const authRepository = new AuthRepository();
@@ -101,7 +121,12 @@ export function createApplicationServices(): ApplicationServices {
     environment,
     pool,
     synchronizationService,
-    orderService: new OrderService({ pool, orderRepository }),
+    orderService: new OrderService({
+      pool,
+      orderRepository,
+      maximumActiveReservationsPerContact:
+        securityLimits.orders.maximumActiveReservationsPerContact,
+    }),
     orderIntegrationService: new OrderIntegrationService({
       pool,
       orderRepository,
@@ -132,6 +157,10 @@ export function createApplicationServices(): ApplicationServices {
           repository: authRepository,
           securitySecret: environment.OTP_CODE_PEPPER,
           emailEnvironment: environment,
+          maximumFailedAttemptsPerDestination:
+            securityLimits.otp.maximumFailedAttemptsPerEmail,
+          failedAttemptsWindowMilliseconds:
+            securityLimits.otp.failedAttemptsWindowSeconds * 1_000,
         })
       : null,
     fitmentProvider: new LocalFitmentProvider(pool, fitmentRepository),
@@ -152,5 +181,8 @@ export function createApplicationServices(): ApplicationServices {
       orderRepository,
       adminAuditRepository,
     ),
+    rateLimiter: new PostgresRateLimiter(pool, {
+      keySecret: environment.OTP_CODE_PEPPER,
+    }),
   };
 }

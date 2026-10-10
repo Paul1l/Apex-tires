@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { applicationLogger } from "@/server/types/common";
 import {
   getSupplementalModelsForMake,
   normalizeVehicleMakeName,
@@ -94,7 +95,7 @@ export async function GET(request: NextRequest) {
         { headers: { "Cache-Control": "public, s-maxage=300" } },
       );
     } catch (error) {
-      console.error("PostgreSQL vehicle models request failed", error);
+      applicationLogger.error({ error }, "PostgreSQL vehicle models request failed");
       return NextResponse.json(
         {
           ok: false,
@@ -158,7 +159,7 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    console.error("Vehicle models catalog request failed", error);
+    applicationLogger.error({ error }, "Vehicle models catalog request failed");
     return NextResponse.json(
       {
         ok: true,

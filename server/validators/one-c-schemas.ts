@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { productImageUrlSchema } from "./image-url";
 
 const externalIdSchema = z.string().trim().min(1).max(150);
 const skuSchema = z.string().trim().min(1).max(100);
@@ -48,7 +49,7 @@ export const productSchema = z.object({
     .array(
       z.object({
         externalId: z.string().trim().max(150).optional(),
-        url: z.url().max(2_000),
+        url: productImageUrlSchema,
         alt: z.string().trim().max(300).default(""),
         position: z.number().int().min(0).max(100).default(0),
       }),

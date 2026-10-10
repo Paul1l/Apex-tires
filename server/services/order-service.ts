@@ -9,11 +9,15 @@ import {
   type StockReservation,
 } from "../repositories/order-repository";
 import { ApplicationError } from "../utils/errors";
-import type { CreateOrderInput } from "../validators/order-schemas";
+import {
+  MAXIMUM_ORDER_PRODUCT_QUANTITY,
+  type CreateOrderInput,
+} from "../validators/order-schemas";
 
 type CheckoutOrderRepository = Pick<
   OrderRepository,
   | "findByCheckoutIdempotencyKey"
+  | "countActiveReservationOrdersForContact"
   | "lockProductsForCheckout"
   | "getDeliveryPriceKopecks"
   | "reserveStock"
@@ -34,7 +38,11 @@ export interface OrderServiceDependencies {
   enabledDeliveryMethods?: readonly DeliveryMethod[];
   tireServiceEnabled?: boolean;
   managerNotificationEmail?: string;
+  /** Abuse guard: orders with unexpired stock reservations per phone/email. */
+  maximumActiveReservationsPerContact?: number;
 }
+
+const DEFAULT_MAXIMUM_ACTIVE_RESERVATIONS_PER_CONTACT = 3;
 
 export class OrderService {
   private readonly pool: Pool;
@@ -42,6 +50,7 @@ export class OrderService {
   private readonly enabledDeliveryMethods: readonly DeliveryMethod[];
   private readonly tireServiceEnabled: boolean;
   private readonly managerNotificationEmail?: string;
+  private readonly maximumActiveReservationsPerContact: number;
 
   constructor({
     pool,
@@ -52,12 +61,14 @@ export class OrderService {
       businessConfig.contacts.supportEmail ??
       businessConfig.contacts.email ??
       undefined,
+    maximumActiveReservationsPerContact = DEFAULT_MAXIMUM_ACTIVE_RESERVATIONS_PER_CONTACT,
   }: OrderServiceDependencies) {
     this.pool = pool;
     this.orderRepository = orderRepository;
     this.enabledDeliveryMethods = enabledDeliveryMethods;
     this.tireServiceEnabled = tireServiceEnabled;
     this.managerNotificationEmail = managerNotificationEmail;
+    this.maximumActiveReservationsPerContact = maximumActiveReservationsPerContact;
   }
 
   async createOrder(
@@ -103,6 +114,32 @@ export class OrderService {
           item.productId,
           (quantityByProductId.get(item.productId) ?? 0) + item.quantity,
         );
+      }
+      for (const quantity of quantityByProductId.values()) {
+        if (quantity > MAXIMUM_ORDER_PRODUCT_QUANTITY) {
+          throw new ApplicationError({
+            code: "VALIDATION_ERROR",
+            message: `Одного товара в заказе может быть не больше ${MAXIMUM_ORDER_PRODUCT_QUANTITY} шт.`,
+            statusCode: 422,
+          });
+        }
+      }
+
+      // Serialized per contact inside the repository, so parallel checkouts
+      // cannot overshoot the limit.
+      const activeReservationOrders =
+        await this.orderRepository.countActiveReservationOrdersForContact(database, {
+          phone: input.customer.phone,
+          email: input.customer.email,
+        });
+      if (activeReservationOrders >= this.maximumActiveReservationsPerContact) {
+        throw new ApplicationError({
+          code: "ACTIVE_RESERVATIONS_LIMIT_EXCEEDED",
+          message:
+            `На этот телефон или email уже оформлено заказов с резервом товара: ${activeReservationOrders}. ` +
+            "Дождитесь звонка менеджера или позвоните нам — новый заказ можно будет оформить после обработки текущих.",
+          statusCode: 429,
+        });
       }
       const requestedItems = Array.from(quantityByProductId, ([productId, quantity]) => ({
         productId,

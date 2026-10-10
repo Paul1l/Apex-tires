@@ -7,7 +7,8 @@ Production read model и первичное хранилище backend — Postg
 
 `server/database/migrations/001_initial_postgresql.sql` и
 `002_local_business_readiness.sql`, `003_catalog_auth_and_cart.sql`,
-`004_large_catalog.sql`, `005_order_status_history.sql`, `006_inventory_reservations.sql`.
+`004_large_catalog.sql`, `005_order_status_history.sql`, `006_inventory_reservations.sql`,
+`007_rate_limits.sql`.
 
 Production-база пока не развернута и строка подключения не хранится в
 репозитории. Для магазина с персональными данными PostgreSQL и backend должны
@@ -21,6 +22,12 @@ Production-база пока не развернута и строка подк�
 
 Runner берет advisory lock, выполняет каждый новый SQL-файл в транзакции и
 записывает его имя в `schema_migrations`. Повторный запуск безопасен.
+
+Миграция 007 только добавляет таблицу `rate_limit_buckets` и два индекса
+`orders` (телефон; `LOWER(customer_email)`), ничего не удаляет и не меняет
+существующие данные. Индексы строятся обычным `CREATE INDEX` внутри транзакции
+миграции: на время построения запись в `orders` ждёт, на текущих объёмах это
+доли секунды.
 
 ## Основные таблицы
 
@@ -47,6 +54,7 @@ Runner берет advisory lock, выполняет каждый новый SQL-
 | `used_product_lots`, `used_product_lot_images` | конкретные б/у комплекты и их реальные фотографии |
 | `vehicle_fitment_requests` | запросы покупателей по отсутствующим автомобилям |
 | `notification_outbox` | надежная очередь email/Telegram без отправки из HTTP-транзакции |
+| `rate_limit_buckets` | счётчики защитных лимитов (ключ — HMAC, фиксированные окна), чистятся заданием резервов |
 | `shopping_carts`, `shopping_cart_items` | пользовательские и анонимные серверные корзины |
 | `user_identities`, `addresses`, `favorites`, `comparison_items` | подготовленные таблицы; не все имеют пользовательский API |
 

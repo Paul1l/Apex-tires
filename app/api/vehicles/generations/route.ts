@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { applicationLogger } from "@/server/types/common";
 import {
   createApplicationServices,
   databaseIsConfigured,
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest) {
       items: generations.map((name) => ({ id: name.toLocaleLowerCase("ru"), name })),
     });
   } catch (error) {
-    console.error("Vehicle generation lookup failed", error);
+    applicationLogger.error({ error }, "Vehicle generation lookup failed");
     return NextResponse.json(
       { ok: false, code: "FITMENT_STORAGE_UNAVAILABLE", message: "Поколения временно недоступны." },
       { status: 503 },

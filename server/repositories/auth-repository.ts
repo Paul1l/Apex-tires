@@ -59,6 +59,40 @@ export class AuthRepository {
     return Number(result.rows[0]?.count ?? 0);
   }
 
+  /**
+   * Challenges of one destination with failed code attempts since `startedAt`
+   * (oldest first). Used for the per-address lockout across challenges.
+   */
+  async listFailedAttemptsSince(
+    database: DatabaseExecutor,
+    destinationHash: string,
+    startedAt: Date,
+  ): Promise<Array<{ created_at: Date | string; attempts: number }>> {
+    const result = await database.query<{ created_at: Date | string; attempts: number }>(
+      `SELECT created_at, attempts
+       FROM otp_challenges
+       WHERE destination_hash = $1 AND created_at >= $2 AND attempts > 0
+       ORDER BY created_at ASC`,
+      [destinationHash, startedAt],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Serializes code verification for one destination until the transaction
+   * ends, so parallel guesses against several challenges cannot overshoot the
+   * per-address failure limit.
+   */
+  async lockDestinationForVerification(
+    database: DatabaseExecutor,
+    destinationHash: string,
+  ): Promise<void> {
+    await database.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`otp-destination:${destinationHash}`],
+    );
+  }
+
   async createChallenge(
     database: DatabaseExecutor,
     challenge: {

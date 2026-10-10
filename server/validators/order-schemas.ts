@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** Maximum quantity of one product per order (per line and after merging duplicate lines). */
+export const MAXIMUM_ORDER_PRODUCT_QUANTITY = 20;
+
 export const createOrderSchema = z.object({
   idempotencyKey: z.string().trim().min(16).max(200),
   customer: z.object({
@@ -14,11 +17,30 @@ export const createOrderSchema = z.object({
     .array(
       z.object({
         productId: z.uuid(),
-        quantity: z.number().int().min(1).max(20),
+        quantity: z.number().int().min(1).max(MAXIMUM_ORDER_PRODUCT_QUANTITY),
       }),
     )
     .min(1)
-    .max(50),
+    .max(50)
+    .superRefine((items, context) => {
+      // Duplicate lines of one product are merged at checkout, so the per-line
+      // maximum must also hold for the merged quantity (50 x 20 is not 1000).
+      const quantityByProductId = new Map<string, number>();
+      items.forEach((item, index) => {
+        const quantity = (quantityByProductId.get(item.productId) ?? 0) + item.quantity;
+        quantityByProductId.set(item.productId, quantity);
+        if (
+          quantity > MAXIMUM_ORDER_PRODUCT_QUANTITY &&
+          quantity - item.quantity <= MAXIMUM_ORDER_PRODUCT_QUANTITY
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: [index, "quantity"],
+            message: `Одного товара в заказе может быть не больше ${MAXIMUM_ORDER_PRODUCT_QUANTITY} шт.`,
+          });
+        }
+      });
+    }),
   delivery: z.object({
     method: z.enum(["pickup", "courier", "transport_company"]),
     address: z.string().trim().max(500).optional(),

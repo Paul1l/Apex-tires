@@ -218,6 +218,45 @@ export class OrderRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * Counts orders of one contact (phone or case-insensitive email) that still
+   * hold unexpired stock reservations. Must run inside the checkout
+   * transaction: it takes transaction-scoped advisory locks on the contact
+   * keys (in a stable order) so parallel checkouts of one contact are
+   * serialized until commit and cannot exceed the limit together.
+   */
+  async countActiveReservationOrdersForContact(
+    database: DatabaseExecutor,
+    contact: { phone: string; email?: string | null },
+  ): Promise<number> {
+    const email = contact.email?.trim().toLowerCase() || null;
+    const lockKeys = [`checkout-contact:phone:${contact.phone}`];
+    if (email) lockKeys.push(`checkout-contact:email:${email}`);
+    await database.query(
+      `SELECT pg_advisory_xact_lock(contact_lock.key)
+       FROM (
+         SELECT DISTINCT hashtextextended(contact_key, 0) AS key
+         FROM UNNEST($1::text[]) AS contact_key
+         ORDER BY 1
+       ) contact_lock`,
+      [lockKeys],
+    );
+    const result = await database.query<{ count: number | string }>(
+      `SELECT COUNT(*)::integer AS count
+       FROM orders
+       WHERE (orders.customer_phone = $1
+              OR ($2::text IS NOT NULL AND LOWER(orders.customer_email) = $2::text))
+         AND EXISTS (
+           SELECT 1 FROM inventory_reservations
+           WHERE inventory_reservations.order_id = orders.id
+             AND inventory_reservations.status = 'active'
+             AND inventory_reservations.expires_at > NOW()
+         )`,
+      [contact.phone, email],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
   async lockProductsForCheckout(
     database: DatabaseExecutor,
     productIds: string[],

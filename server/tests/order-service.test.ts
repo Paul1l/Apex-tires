@@ -34,6 +34,9 @@ test("order total is calculated from locked backend prices", async () => {
     async findByCheckoutIdempotencyKey() {
       return null;
     },
+    async countActiveReservationOrdersForContact() {
+      return 0;
+    },
     async lockProductsForCheckout() {
       return [
         {
