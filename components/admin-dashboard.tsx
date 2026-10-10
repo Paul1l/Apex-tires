@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   ArrowLeft,
@@ -466,6 +467,7 @@ function SettingsSection() {
 
 export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile }) {
   const { user: hydratedUser, logout } = useStore();
+  const router = useRouter();
   const user = hydratedUser ?? authorizedUser;
   const [section, setSection] = useState<Section>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -504,7 +506,12 @@ export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile
           <div className="admin-topbar-actions">
             <button className="admin-sync-button" onClick={() => navigate("sync")}><RefreshCw size={16} /> <span>1С: настройка</span></button>
             <button className="admin-user-button"><span>{user.name.slice(0, 1)}</span><p><strong>{user.name}</strong><small>Администратор</small></p></button>
-            <button className="admin-logout" onClick={logout} aria-label="Выйти"><LogOut size={18} /></button>
+            <button className="admin-logout" onClick={async () => {
+              // Re-render the server page: without a session it shows the sign-in message
+              // instead of the already loaded dashboard data.
+              if (await logout()) router.refresh();
+              else window.alert("Не удалось выйти. Проверьте соединение и попробуйте ещё раз.");
+            }} aria-label="Выйти"><LogOut size={18} /></button>
           </div>
         </header>
         <div className="admin-content">

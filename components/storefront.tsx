@@ -961,6 +961,7 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
   }>>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersMessage, setOrdersMessage] = useState("");
+  const [logoutMessage, setLogoutMessage] = useState("");
   const titleId = useId();
 
   useEffect(() => {
@@ -1031,7 +1032,18 @@ function AccountPanel({ open, onClose }: { open: boolean; onClose: () => void })
             </div>
           )}
         </div>
-        <button type="button" className="logout-button" onClick={() => { logout(); onClose(); }}>Выйти из аккаунта</button>
+        {logoutMessage && <p className="form-message" role="alert">{logoutMessage}</p>}
+        <button
+          type="button"
+          className="logout-button"
+          onClick={async () => {
+            setLogoutMessage("");
+            if (await logout()) onClose();
+            else setLogoutMessage("Не удалось выйти из аккаунта. Проверьте соединение и попробуйте ещё раз.");
+          }}
+        >
+          Выйти из аккаунта
+        </button>
       </section>
     </Overlay>
   );
