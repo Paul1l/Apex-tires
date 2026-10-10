@@ -82,6 +82,9 @@ export const businessConfig = {
   },
   location: {
     city: "Барнаул",
+    // Grammatical forms for templates: «в Барнауле», «по Барнаулу».
+    cityPrepositional: "Барнауле",
+    cityDative: "Барнаулу",
     address: optionalValue(process.env.NEXT_PUBLIC_STORE_ADDRESS),
     latitude: coordinate(process.env.NEXT_PUBLIC_STORE_LATITUDE),
     longitude: coordinate(process.env.NEXT_PUBLIC_STORE_LONGITUDE),
