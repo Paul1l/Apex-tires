@@ -7,10 +7,15 @@ import {
   legalDocuments,
   LEGAL_PLACEHOLDER,
 } from "@/lib/legal-documents";
+import { createPageSeoMetadata } from "@/lib/structured-data";
 
 interface LegalDocumentPageProps {
   params: Promise<{ slug: string }>;
 }
+
+// Unknown slugs are answered by the router with the root not-found page (404),
+// rendered on the server inside the root layout.
+export const dynamicParams = false;
 
 export function generateStaticParams() {
   return legalDocuments.map((document) => ({ slug: document.slug }));
@@ -29,6 +34,7 @@ export async function generateMetadata({
   return {
     title: document.shortTitle,
     description: document.description,
+    ...createPageSeoMetadata(`/legal/${document.slug}`),
   };
 }
 
@@ -41,6 +47,9 @@ export default async function LegalDocumentPage({
   if (!document) {
     notFound();
   }
+
+  // The draft notice is true only while the text still contains placeholders.
+  const hasPlaceholders = JSON.stringify(document).includes(LEGAL_PLACEHOLDER);
 
   return (
     <main className="legal-shell">
@@ -55,14 +64,16 @@ export default async function LegalDocumentPage({
       </header>
 
       <article className="legal-article">
-        <div className="legal-draft-notice">
-          <strong>Проект документа</strong>
-          <span>
-            Реквизиты ИП еще не предоставлены. Поля «{LEGAL_PLACEHOLDER}»
-            необходимо заполнить и проверить с юристом до приема реальных
-            заказов.
-          </span>
-        </div>
+        {hasPlaceholders && (
+          <div className="legal-draft-notice">
+            <strong>Проект документа</strong>
+            <span>
+              Реквизиты ИП еще не предоставлены. Поля «{LEGAL_PLACEHOLDER}»
+              необходимо заполнить и проверить с юристом до приема реальных
+              заказов.
+            </span>
+          </div>
+        )}
 
         <header>
           <p className="eyebrow">Редакция от 31 июля 2026 года</p>

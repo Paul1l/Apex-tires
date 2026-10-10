@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { AdminDashboard } from "@/components/admin-dashboard";
@@ -7,8 +8,12 @@ import {
   createApplicationServices,
 } from "@/server/bootstrap/application-services";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Панель управления магазином",
+  description: "Закрытый раздел для сотрудников магазина.",
+  // Never indexed, on any deployment stage (robots.txt alone does not stop
+  // indexing of a linked URL).
+  robots: { index: false, follow: false },
 };
 export const dynamic = "force-dynamic";
 

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Manrope, Unbounded } from "next/font/google";
 import { PrivacyTools } from "@/components/privacy-tools";
 import { StoreProvider } from "@/components/store-provider";
-import { businessConfig, getSellerDisplayName } from "@/config/business";
+import { businessConfig } from "@/config/business";
+import { createBaseOpenGraph, createSiteJsonLd, serializeJsonLd } from "@/lib/structured-data";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -17,65 +18,41 @@ const unbounded = Unbounded({
   display: "swap",
 });
 
+const { brandName, location } = businessConfig;
+
+// No `alternates.canonical` and no `openGraph.url` here: both would be
+// inherited by every page that does not set its own (admin, 404). Each
+// indexable page sets them through createPageSeoMetadata().
 export const metadata: Metadata = {
   metadataBase: businessConfig.siteUrl
     ? new URL(businessConfig.siteUrl)
     : undefined,
   title: {
-    default: `${businessConfig.brandName} — шины и диски в ${businessConfig.location.city}`,
-    template: `%s — ${businessConfig.brandName}`,
+    default: `${brandName} — шины и диски в ${location.cityPrepositional}`,
+    template: `%s — ${brandName}`,
   },
   description:
-    `Каталог шин и дисков с подбором по размерам и автомобилю в ${businessConfig.location.city}.`,
+    `Каталог шин и дисков в ${location.cityPrepositional}: подбор по размеру и по автомобилю.`,
+  applicationName: brandName,
   icons: { icon: businessConfig.branding.faviconSource },
+  // Preview (demo prices): noindex in HTML; robots.txt allows crawling so
+  // that search engines can read this tag (see app/robots.ts).
   robots:
     businessConfig.deploymentStage === "production"
       ? { index: true, follow: true }
       : { index: false, follow: false },
-  openGraph: businessConfig.branding.openGraphImageSource
-    ? { images: [businessConfig.branding.openGraphImageSource] }
-    : undefined,
+  openGraph: createBaseOpenGraph(),
+  twitter: {
+    card: businessConfig.branding.openGraphImageSource ? "summary_large_image" : "summary",
+  },
 };
-
-function createLocalBusinessStructuredData() {
-  const sellerName = businessConfig.businessName ?? getSellerDisplayName();
-  const { address, latitude, longitude } = businessConfig.location;
-  const { phone, email } = businessConfig.contacts;
-  if (!sellerName || !address || !phone || !email) return null;
-
-  return {
-    "@context": "https://schema.org",
-    "@type": "AutoPartsStore",
-    name: sellerName,
-    telephone: phone,
-    email,
-    address: {
-      "@type": "PostalAddress",
-      streetAddress: address,
-      addressLocality: businessConfig.location.city,
-      addressCountry: "RU",
-    },
-    ...(latitude !== null && longitude !== null
-      ? {
-          geo: {
-            "@type": "GeoCoordinates",
-            latitude,
-            longitude,
-          },
-        }
-      : {}),
-    ...(businessConfig.workingHours
-      ? { openingHours: businessConfig.workingHours }
-      : {}),
-  };
-}
 
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const structuredData = createLocalBusinessStructuredData();
+  const structuredData = createSiteJsonLd();
 
   return (
     <html lang="ru">
@@ -83,7 +60,7 @@ export default function RootLayout({
         {structuredData && (
           <script
             type="application/ld+json"
-            dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g,"\\u003c") }}
+            dangerouslySetInnerHTML={{ __html: serializeJsonLd(structuredData) }}
           />
         )}
         <StoreProvider>
