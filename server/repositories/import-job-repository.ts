@@ -40,7 +40,9 @@ export class ImportJobRepository {
 
   async start(database: DatabaseExecutor, jobId: string): Promise<void> {
     await database.query(
-      `UPDATE import_jobs SET status = 'processing', started_at = NOW() WHERE id = $1`,
+      `UPDATE import_jobs SET status = 'processing', started_at = NOW(),
+         last_progress_at = clock_timestamp()
+       WHERE id = $1`,
       [jobId],
     );
   }
@@ -50,9 +52,13 @@ export class ImportJobRepository {
     jobId: string,
     progress: ImportProgress,
   ): Promise<void> {
+    // Runs inside the batch transaction: last_progress_at becomes visible
+    // with the committed batch. clock_timestamp(), not NOW(): NOW() is the
+    // start of a possibly long transaction.
     await database.query(
       `UPDATE import_jobs SET total_rows = $2, processed_rows = $3,
-         created_rows = $4, updated_rows = $5, failed_rows = $6
+         created_rows = $4, updated_rows = $5, failed_rows = $6,
+         last_progress_at = clock_timestamp()
        WHERE id = $1`,
       [jobId, progress.totalRows, progress.processedRows, progress.createdRows, progress.updatedRows, progress.failedRows],
     );
@@ -111,6 +117,27 @@ export class ImportJobRepository {
          finished_at = NOW() WHERE id = $1`,
       [jobId, status, errorSummary ?? null],
     );
+  }
+
+  /**
+   * Marks as failed the imports that are still queued/processing but showed
+   * no sign of work (start, committed batch) for `staleMinutes`. A live
+   * import commits a batch at least every few minutes, so it is not touched.
+   * Returns the ids of the marked jobs.
+   */
+  async failStale(
+    database: DatabaseExecutor,
+    staleMinutes: number,
+    reason: string,
+  ): Promise<string[]> {
+    const result = await database.query<{ id: string }>(
+      `UPDATE import_jobs SET status = 'failed', error_summary = $2, finished_at = NOW()
+       WHERE status IN ('queued', 'processing')
+         AND COALESCE(last_progress_at, started_at, created_at) < NOW() - make_interval(mins => $1)
+       RETURNING id`,
+      [staleMinutes, reason],
+    );
+    return result.rows.map((row) => row.id);
   }
 
   async list(database: DatabaseExecutor, limit = 50): Promise<JsonValue[]> {
