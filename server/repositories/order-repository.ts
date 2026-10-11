@@ -58,6 +58,8 @@ export interface NormalizedOrderItem {
 
 export interface PersistedOrderInput extends Omit<CreateOrderInput, "items"> {
   items: NormalizedOrderItem[];
+  /** hashCheckoutRequest() of the request, kept with the idempotency key. */
+  checkoutRequestHash?: string;
   subtotalKopecks: number;
   deliveryKopecks: number;
   totalKopecks: number;
@@ -227,12 +229,14 @@ export class OrderRepository {
     return configuredPrice;
   }
 
+  /** Order created with this key and the hash of its request (NULL before migration 009). */
   async findByCheckoutIdempotencyKey(
     database: DatabaseExecutor,
     idempotencyKey: string,
-  ): Promise<CreatedOrderRow | null> {
-    const result = await database.query<CreatedOrderRow>(
-      `SELECT id, number, status, integration_status, total_kopecks, created_at
+  ): Promise<(CreatedOrderRow & { checkout_request_hash: string | null }) | null> {
+    const result = await database.query<CreatedOrderRow & { checkout_request_hash: string | null }>(
+      `SELECT id, number, status, integration_status, total_kopecks, created_at,
+         checkout_request_hash
        FROM orders
        WHERE checkout_idempotency_key = $1`,
       [idempotencyKey],
@@ -334,8 +338,8 @@ export class OrderRepository {
          number, user_id, checkout_idempotency_key, customer_name, customer_email,
          customer_phone, subtotal_kopecks, discount_kopecks, delivery_kopecks,
          total_kopecks, delivery_method, delivery_address, comment,
-         requires_tire_service
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13)
+         requires_tire_service, checkout_request_hash
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id, number, status, integration_status, total_kopecks, created_at`,
       [
         orderNumber,
@@ -351,6 +355,7 @@ export class OrderRepository {
         order.delivery.address ?? null,
         order.comment ?? null,
         order.requiresTireService,
+        order.checkoutRequestHash ?? null,
       ],
     );
     const createdOrder = orderResult.rows[0];

@@ -16,12 +16,18 @@ import type { CreateOrderInput } from "../validators/order-schemas";
 import { releaseExpiredReservations } from "../services/reservation-cleanup-service";
 import { stockSchema } from "../validators/one-c-schemas";
 import { withTransaction } from "../database/postgres-client";
+import { sanitizeError } from "../types/common";
 
 const connectionString = process.env.PERFORMANCE_DATABASE_URL;
 if (!connectionString || process.env.NODE_ENV === "production") throw new Error("Set PERFORMANCE_DATABASE_URL to an empty test-only database.");
 const destination = new URL(connectionString);
 if (!destination.pathname.startsWith("/apex_perf_")) throw new Error("Test database name must start with apex_perf_.");
 const pool = new pg.Pool({ connectionString, max: 5 });
+// Same as createPostgresPool: an idle client that loses its connection must
+// not end the run with an unhandled "error" event.
+pool.on("error", (error) => {
+  console.error("PostgreSQL idle client error", sanitizeError(error));
+});
 const productCount = Number(process.env.PERFORMANCE_PRODUCT_COUNT || 50_000);
 if (!Number.isInteger(productCount) || productCount < 100 || productCount > 300_000) throw new Error("Invalid test product count");
 const measurements: Record<string, number> = {};

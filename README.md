@@ -86,8 +86,10 @@ production-БД в репозитории нет.
 ## Production checklist
 
 1. Получить реквизиты ИП и провести юридическую проверку документов.
-2. Разместить Next.js и PostgreSQL в РФ; применить production-миграции
-   (`pnpm db:migrate`, сейчас 001–008).
+2. Разместить Next.js и PostgreSQL в РФ; задать `POSTGRES_APP_PASSWORD`
+   (приложение работает под отдельной ролью без прав на структуру БД) и
+   применить миграции 001–009 ролью-владельцем: `docker compose … run --rm migrate`
+   (порядок — `docs/VDS_DEPLOYMENT.md`, раздел «Роли PostgreSQL»).
 3. Подключить production PostgreSQL; каталог, CSV-import, корзина, заказы и
    административные статусы уже имеют защищённый server API.
 4. Подключить email OTP к российской БД и Yandex Cloud Postbox, проверить

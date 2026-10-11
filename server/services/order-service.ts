@@ -12,6 +12,7 @@ import {
 } from "../repositories/order-repository";
 import { ApplicationError } from "../utils/errors";
 import { formatProductDisplayName } from "../utils/product-title";
+import { hashCheckoutRequest } from "./checkout-request-hash";
 import {
   MAXIMUM_ORDER_PRODUCT_QUANTITY,
   type CreateOrderInput,
@@ -64,6 +65,30 @@ export function formatInsufficientStockMessage(
   return displayMode === "exact"
     ? `Товара «${productName}» сейчас в наличии только ${available} шт. Уменьшите количество в корзине.`
     : `Товара «${productName}» нет в нужном количестве. Уменьшите количество в корзине или свяжитесь с нами.`;
+}
+
+type ExistingCheckoutOrder = CreatedOrderRow & { checkout_request_hash?: string | null };
+
+/**
+ * Result for a repeated idempotency key (SEC-21): the same request gets the
+ * existing order (a retry after a lost response); a different request with
+ * that key is refused. Orders saved before the hash existed (NULL) are
+ * returned as before.
+ */
+function repeatedCheckoutResult(
+  existing: ExistingCheckoutOrder,
+  requestHash: string,
+): CreatedOrderRow & { duplicate: true } {
+  const { checkout_request_hash: storedHash, ...order } = existing;
+  if (storedHash && storedHash !== requestHash) {
+    throw new ApplicationError({
+      code: "IDEMPOTENCY_KEY_REUSED",
+      message:
+        "Этот заказ уже был отправлен с другими данными. Обновите страницу и оформите заказ заново или позвоните менеджеру.",
+      statusCode: 409,
+    });
+  }
+  return { ...order, duplicate: true };
 }
 
 /** 409 with the catalog name (brand, model, size). */
@@ -123,11 +148,12 @@ export class OrderService {
         statusCode: 422,
       });
     }
+    const requestHash = hashCheckoutRequest(input);
     const existingOrder = await this.orderRepository.findByCheckoutIdempotencyKey(
       this.pool,
       input.idempotencyKey,
     );
-    if (existingOrder) return { ...existingOrder, duplicate: true };
+    if (existingOrder) return repeatedCheckoutResult(existingOrder, requestHash);
 
     return withTransaction(this.pool, async (database) => {
       await database.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
@@ -139,7 +165,7 @@ export class OrderService {
           input.idempotencyKey,
         );
       if (orderCreatedByConcurrentRequest) {
-        return { ...orderCreatedByConcurrentRequest, duplicate: true };
+        return repeatedCheckoutResult(orderCreatedByConcurrentRequest, requestHash);
       }
 
       const quantityByProductId = new Map<string, number>();
@@ -248,6 +274,7 @@ export class OrderService {
       return this.orderRepository.create(database, {
         ...input,
         ...context,
+        checkoutRequestHash: requestHash,
         items: normalizedItems,
         subtotalKopecks,
         deliveryKopecks,

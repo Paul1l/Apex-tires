@@ -7,7 +7,7 @@
 1. Получить домен и направить A-запись на VDS.
 2. Заполнить клиентские данные из `CLIENT_DATA_REQUIRED.md`.
 3. Создать `.env.production` вне Git на основе `.env.example`.
-4. Сгенерировать отдельные случайные значения `POSTGRES_PASSWORD`, `OTP_CODE_PEPPER`, `INTERNAL_JOB_SECRET` и `INTEGRATION_API_KEY` длиной не менее 32 символов.
+4. Сгенерировать отдельные случайные значения `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`, `OTP_CODE_PEPPER`, `INTERNAL_JOB_SECRET` и `INTEGRATION_API_KEY` длиной не менее 32 символов. Пароли PostgreSQL входят в строку подключения, поэтому в них не должно быть символов, требующих кодирования в URL; подходит `openssl rand -hex 32`.
 5. Открыть только TCP 22, 80 и 443. Порт PostgreSQL 5432 наружу не открывать.
 
 ## Первый запуск
@@ -15,8 +15,12 @@
 ```bash
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml build
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d postgres
-docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm app pnpm db:migrate
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate
 ```
+
+При первом старте с пустым томом PostgreSQL создаёт роль приложения
+(`deploy/postgres/init/10-app-role.sql`, см. «Роли PostgreSQL»). Миграции
+выполняет владелец схемы через одноразовый сервис `migrate`.
 
 Для первого выпуска сертификата временно смонтировать
 `deploy/nginx/bootstrap-http.conf.template` вместо TLS-шаблона и запустить
@@ -35,13 +39,17 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 git pull --ff-only
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml build app
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml pull nginx
-docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm app pnpm db:migrate
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm --no-deps nginx nginx -t
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d app nginx
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml restart nginx
 ```
 
 Сначала создаётся резервная копия БД. После выкладки проверяются `/api/health`, каталог, вход, создание тестового заказа и журналы контейнеров.
+
+`migrate` запускает образ, собранный для `app` (`apex-wheels-app:latest`),
+поэтому `build app` выполняется до миграций. Командой `up` сервис не
+запускается (профиль `tools`).
 
 `pull nginx` подтягивает исправления стабильной ветки nginx (тег `1.30-alpine`).
 Шаблон `deploy/nginx/templates/default.conf.template` подставляется в конфигурацию
@@ -51,6 +59,95 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 переменными и сертификатом, не трогая работающий nginx (контейнер `app` должен
 быть запущен: имя `app` разрешается при проверке). Если проверка не прошла,
 `restart` не выполнять.
+
+## Роли PostgreSQL
+
+Работающее приложение подключается к PostgreSQL отдельной ролью
+`POSTGRES_APP_USER` (по умолчанию `apex_app`). Владелец схемы `POSTGRES_USER`,
+которого образ `postgres` создаёт суперпользователем, используется только для
+миграций (`run --rm migrate`) и резервных копий. Его пароль в окружение
+контейнера `app` не передаётся.
+
+Права роли приложения:
+- `SELECT`, `INSERT`, `UPDATE`, `DELETE` на таблицы;
+- `USAGE` и `SELECT` на последовательности;
+- `EXECUTE` на функции.
+
+Ей запрещено:
+- DDL: нельзя создавать таблицы, в том числе временные, создавать схемы и
+  расширения, менять и удалять таблицы;
+- `TRUNCATE`, `setval`, `COPY ... PROGRAM`, чтение файлов сервера;
+- доступ к журналу миграций `schema_migrations`;
+- атрибуты `SUPERUSER`, `CREATEDB` и `CREATEROLE`.
+
+Права по умолчанию (`ALTER DEFAULT PRIVILEGES`) дают те же права на таблицы,
+последовательности и функции, которые создадут будущие миграции владельца.
+Подробности — в `docs/DATABASE.md`.
+
+Роль создаёт и настраивает `deploy/postgres/init/10-app-role.sql`. Имя и пароль
+скрипт берёт из `POSTGRES_APP_USER` и `POSTGRES_APP_PASSWORD` окружения
+контейнера `postgres`. Скрипт идемпотентен: повторный запуск задаёт пароль
+заново и отбирает лишние права.
+- На пустом томе образ запускает его сам при первом старте (каталог смонтирован
+  в `/docker-entrypoint-initdb.d`).
+- На существующей базе он запускается командой из следующего раздела.
+
+Без `POSTGRES_APP_PASSWORD` Docker Compose не выполняет ни одну команду с этим
+файлом, включая задания cron и резервную копию: `required variable
+POSTGRES_APP_PASSWORD is missing a value`.
+
+### Переход на отдельную роль на работающем сервере
+
+Выполняется один раз, в окно обслуживания. На шагах 4–7 сайт несколько секунд
+отвечает 503.
+
+1. Сделать резервную копию:
+   `docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres sh /scripts/backup-postgres.sh`.
+2. До `git pull` добавить в `.env.production`:
+   `POSTGRES_APP_USER=apex_app` и `POSTGRES_APP_PASSWORD=<openssl rand -hex 32>`.
+   Без этой переменной новый compose-файл не запустит ни одну команду.
+3. `git pull --ff-only`, затем
+   `docker compose --env-file .env.production -f deploy/docker-compose.production.yml build app`.
+4. Пересоздать контейнер PostgreSQL с новыми переменными и каталогом init:
+   `docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d postgres`.
+   Том с данными сохраняется. Скрипты init на непустом томе не запускаются.
+5. Создать роль и выдать права:
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+     sh -c 'psql -v ON_ERROR_STOP=1 --no-psqlrc -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/10-app-role.sql'
+   ```
+
+   Ожидаемая последняя строка: «Роль приложения apex_app готова: только чтение
+   и изменение данных, без DDL». Пароль и имя берутся из окружения контейнера;
+   в командной строке и истории shell их нет.
+6. Применить миграции владельцем:
+   `docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate`.
+7. Перезапустить приложение уже от роли приложения:
+   `docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d app nginx`.
+8. Открыть любую страницу каталога (простаивающие соединения закрываются через
+   30 с) и проверить, от какой роли работает приложение. Ожидается только
+   `apex_app`:
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT usename, count(*) FROM pg_stat_activity WHERE application_name = '"'"'apex-wheels-backend'"'"' GROUP BY 1"'
+   ```
+
+   Затем проверить `/api/health`, каталог, вход, корзину, тестовый заказ,
+   импорт CSV в админке и `docker compose ... logs app`.
+
+Откат: временно указать в `.env.production` в `POSTGRES_APP_USER` и
+`POSTGRES_APP_PASSWORD` значения `POSTGRES_USER` и `POSTGRES_PASSWORD`, затем
+выполнить `up -d app`. Приложение снова подключится владельцем; роль
+`apex_app` при этом не мешает. Повторный запуск скрипта роли с такими
+значениями остановится с ошибкой, так и задумано.
+
+Смена пароля роли приложения: изменить `POSTGRES_APP_PASSWORD`, выполнить
+`up -d postgres`, команду шага 5 и `up -d app`.
+
+CLI-импорт на сервере (`docker compose ... run --rm app pnpm import:csv ...`)
+работает от роли приложения: ему нужны только данные.
 
 ## Проверка конфигурации при старте
 
@@ -94,12 +191,26 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 ```
 
 Скрипт уже смонтирован в контейнер PostgreSQL только для чтения. Пароли не указываются прямо в crontab.
+Копию делает владелец схемы (`POSTGRES_USER`). Она содержит права роли
+приложения. При восстановлении в новую базу роль `apex_app` должна уже
+существовать (контейнер с новым томом создаёт её сам), иначе `pg_restore`
+выдаст предупреждения на `GRANT`. После восстановления повторите команду шага 5
+из раздела «Переход на отдельную роль на работающем сервере».
 Скрипт запускается через `sh`: в Git он хранится без права на исполнение, и
 прямой вызов `/scripts/backup-postgres.sh` завершился бы ошибкой `permission denied`.
 
 ## Фоновые уведомления
 
 Заказы и заявки атомарно создают записи в `notification_outbox`. Каждую минуту cron вызывает защищённый `POST /api/internal/jobs/notifications` с заголовком `X-Job-Key`. Значение заголовка берётся из `INTERNAL_JOB_SECRET`; его нельзя помещать в команду, попадающую в общий журнал или историю shell. Если Postbox временно недоступен, уведомление остаётся в очереди и получает отложенную повторную попытку.
+
+Пока Postbox не настроен (не заданы `YANDEX_POSTBOX_*`), задание отвечает
+`200` с `"ok": true`, `"providerConfigured": false`, числом уведомлений в
+очереди (`queued`) и сообщением «Провайдер уведомлений не настроен, уведомления
+остаются в очереди». Очередь не трогается: записи не помечаются ошибочными и не
+теряются, а после настройки Postbox уходят при следующем запуске задания. Cron
+в это время не получает ошибок. С настроенным Postbox поведение прежнее: если
+часть писем не ушла, ответ — `"ok": false`, скрипт печатает счётчики и
+завершается с кодом 1.
 
 Задания вызываются только изнутри контура: nginx отвечает `403` на любой
 запрос к `/api/internal/` извне. Cron на хосте запускает

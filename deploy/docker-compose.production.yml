@@ -4,12 +4,20 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
+      # Schema owner: migrations and backups only (the image creates it as a
+      # superuser). The running app uses POSTGRES_APP_USER (SEC-11).
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Read by postgres/init/10-app-role.sql: on the first start of an empty
+      # volume automatically, on an existing database by the command in
+      # docs/VDS_DEPLOYMENT.md.
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-apex_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backups:/backups
       - ./scripts/backup-postgres.sh:/scripts/backup-postgres.sh:ro
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -18,6 +26,8 @@ services:
     networks: [backend]
 
   app:
+    # Named so that the one-off `migrate` service runs the same build.
+    image: apex-wheels-app:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -63,7 +73,9 @@ services:
         NEXT_PUBLIC_CATALOG_DATA_MODE: database
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Application role: data only, no DDL (deploy/postgres/init/10-app-role.sql).
+      # The owner credentials are not passed to the running app.
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-apex_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/${POSTGRES_DB}
       DATABASE_SSL_MODE: disable
       CATALOG_IMPORT_BATCH_SIZE: ${CATALOG_IMPORT_BATCH_SIZE:-1000}
       FITMENT_IMPORT_BATCH_SIZE: ${FITMENT_IMPORT_BATCH_SIZE:-1000}
@@ -96,6 +108,23 @@ services:
       postgres:
         condition: service_healthy
     networks: [backend, frontend]
+
+  # Migrations as the schema owner (POSTGRES_USER), started only on demand:
+  #   docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate
+  # Uses the image built for `app` (build app first); not started by `up`.
+  migrate:
+    image: apex-wheels-app:latest
+    pull_policy: never
+    profiles: ["tools"]
+    restart: "no"
+    command: ["pnpm", "db:migrate"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_SSL_MODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
 
   nginx:
     # Stable branch; patch releases arrive with `docker compose pull nginx`.
