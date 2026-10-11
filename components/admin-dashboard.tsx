@@ -11,7 +11,6 @@ import {
   Database,
   Download,
   FileJson,
-  Gauge,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -21,23 +20,25 @@ import {
   Settings,
   ShoppingCart,
   Upload,
+  Users,
   X,
 } from "lucide-react";
 import {
-  FormEvent,
   useEffect,
   useMemo,
   useState,
 } from "react";
-import { formatPrice, seasonLabels } from "@/lib/catalog-data";
-import { businessConfig, getSellerDisplayName } from "@/config/business";
+import { businessConfig } from "@/config/business";
 import { validateBusinessConfig } from "@/config/business-validation";
-import type { Product, ProductKind, UserProfile } from "@/lib/types";
+import type { UserProfile } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
-import { ImportJobs } from "@/components/admin/import-jobs";
 import { FitmentRequests } from "@/components/admin/fitment-requests";
+import { OrdersSection } from "@/components/admin/orders-section";
+import { ProductsSection } from "@/components/admin/products-section";
+import { SettingsSection } from "@/components/admin/settings-section";
+import { StaffSection } from "@/components/admin/staff-section";
 
-type Section = "overview" | "products" | "orders" | "sync" | "settings" | "fitment-requests";
+type Section = "overview" | "products" | "orders" | "sync" | "settings" | "fitment-requests" | "staff";
 
 interface OneCGatewayHealth {
   ok: boolean;
@@ -58,14 +59,6 @@ interface OneCGatewayHealth {
     }>;
   };
   orders: Record<"pending" | "processing" | "synced" | "failed", number>;
-}
-
-function MiniArt({ product }: { product: Product }) {
-  if (product.image) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <span className="admin-product-thumb image"><img src={product.image} alt="" /></span>;
-  }
-  return <span className={`admin-product-thumb ${product.kind}`}><i /><b /></span>;
 }
 
 function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
@@ -99,260 +92,6 @@ function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
         <article><span className="admin-kpi-icon violet"><Activity /></span><div><p>Режим</p><strong>{businessConfig.deploymentStage === "production" ? "Production" : "Preview"}</strong><small>Без вымышленных показателей</small></div></article>
       </div>
       <article className="admin-card recent-orders"><div className="admin-card-head"><div><p className="eyebrow">Заказы</p><h2>Рабочих данных пока нет</h2></div><button onClick={() => onNavigate("orders")}>Открыть раздел <ChevronRight size={16} /></button></div><p>После подключения PostgreSQL здесь будут отображаться реальные заказы. Демонстрационные покупатели и суммы удалены.</p></article>
-    </>
-  );
-}
-
-interface CsvImportReport {
-  jobId?: string;
-  received: number;
-  created: number;
-  updated: number;
-  failed: number;
-  errors: Array<{ line: number; message: string }>;
-}
-
-function CsvImportForm({
-  type,
-  title,
-}: {
-  type: "products" | "fitments";
-  title: string;
-}) {
-  const [report, setReport] = useState<CsvImportReport | null>(null);
-  const [message, setMessage] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    setMessage("");
-    setReport(null);
-    try {
-      const form = event.currentTarget;
-      const file = (form.elements.namedItem("file") as HTMLInputElement | null)?.files?.[0];
-      if (!file) throw new Error("Выберите CSV-файл.");
-      const mode = (form.elements.namedItem("mode") as HTMLSelectElement | null)?.value;
-      const response = await fetch(`/api/admin/imports/${type}`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "text/csv; charset=utf-8",
-          "X-File-Name": encodeURIComponent(file.name),
-          "X-Import-Mode": mode === "full" ? "full" : "incremental",
-        },
-        body: file,
-      });
-      const result = (await response.json()) as {
-        report?: CsvImportReport;
-        message?: string;
-      };
-      if (!response.ok && response.status !== 207) {
-        throw new Error(result.message || "Импорт не выполнен.");
-      }
-      if (!result.report) throw new Error("Сервер не вернул отчет об импорте.");
-      setReport(result.report);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Импорт не выполнен.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <form className="admin-card csv-import-card" onSubmit={submit}>
-      <div className="admin-card-head"><div><p className="eyebrow">CSV</p><h2>{title}</h2></div><Upload /></div>
-      <input type="file" name="file" accept=".csv,text/csv" required />
-      {type === "products" && (
-        <label><span>Режим</span><select name="mode" defaultValue="incremental"><option value="incremental">Добавить и обновить</option><option value="full">Полная синхронизация CSV</option></select></label>
-      )}
-      <button className="admin-primary-button" disabled={submitting}>{submitting ? "Проверяем и сохраняем…" : "Запустить импорт"}</button>
-      {message && <p className="admin-login-message" role="alert">{message}</p>}
-      {report && (
-        <div className="import-report">
-          <strong>Получено: {report.received}</strong>
-          <span>Создано: {report.created}; обновлено: {report.updated}; ошибок: {report.failed}.</span>
-          {report.jobId && <small>Задание: {report.jobId}</small>}
-          {report.errors.slice(0, 20).map((error) => <small key={`${error.line}-${error.message}`}>Строка {error.line}: {error.message}</small>)}
-        </div>
-      )}
-    </form>
-  );
-}
-
-function ProductsSection() {
-  const { user } = useStore();
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<"all" | ProductKind>("all");
-  const [products, setProducts] = useState<Product[]>([]);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [message, setMessage] = useState("");
-  const [activeFilter, setActiveFilter] = useState("true");
-  const [sourceFilter, setSourceFilter] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => setPage(1), [kind, query, activeFilter, sourceFilter]);
-  useEffect(() => setSelectedIds([]), [page, kind, query, activeFilter, sourceFilter, refreshKey]);
-  useEffect(() => {
-    const abortController = new AbortController();
-    const timeout = window.setTimeout(() => {
-      const parameters = new URLSearchParams({ type: kind, page: String(page), pageSize: "24", sort: "newest" });
-      if (query.trim()) parameters.set("search", query.trim());
-      parameters.set("active", activeFilter);
-      if (sourceFilter) parameters.set("sourceSystem", sourceFilter);
-      setMessage("Загружаем каталог…");
-      void fetch(`/api/admin/products?${parameters.toString()}`, {
-        credentials: "same-origin",
-        cache: "no-store",
-        signal: abortController.signal,
-      }).then(async (response) => {
-        const result = (await response.json()) as {
-          items?: Product[];
-          pagination?: { total: number; totalPages: number };
-          message?: string;
-        };
-        if (!response.ok) throw new Error(result.message || "Каталог недоступен.");
-        setProducts(result.items ?? []);
-        setTotal(result.pagination?.total ?? 0);
-        setTotalPages(result.pagination?.totalPages ?? 0);
-        setMessage("");
-      }).catch((error: unknown) => {
-        if ((error as { name?: string }).name !== "AbortError") {
-          setProducts([]);
-          setMessage(error instanceof Error ? error.message : "Каталог недоступен.");
-        }
-      });
-    }, 300);
-    return () => { window.clearTimeout(timeout); abortController.abort(); };
-  }, [kind, page, query, activeFilter, sourceFilter, refreshKey]);
-
-  async function updateSelected(action: "activate" | "deactivate") {
-    if (!window.confirm(`${action === "activate" ? "Активировать" : "Скрыть"} выбранные товары (${selectedIds.length})?`)) return;
-    try {
-      const response = await fetch("/api/admin/products/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productIds: selectedIds, action, confirmed: true }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "Изменения не сохранены.");
-      setRefreshKey((current) => current + 1);
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Изменения не сохранены."); }
-  }
-
-  return (
-    <>
-      <div className="admin-page-intro">
-        <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{total} позиций · рабочий источник PostgreSQL</span></div>
-      </div>
-      <div className="admin-two-column">
-        <CsvImportForm type="products" title="Импорт products.csv" />
-        <CsvImportForm type="fitments" title="Импорт fitments.csv" />
-      </div>
-      <ImportJobs />
-      <article className="admin-card products-card">
-        <div className="admin-products-toolbar">
-          <label className="admin-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Название, бренд или артикул" /></label>
-          <select aria-label="Активность товара" value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}><option value="true">Активные</option><option value="false">Неактивные</option></select>
-          <select aria-label="Источник товара" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="">Все источники</option><option value="csv">CSV</option><option value="manual">Вручную</option><option value="1c">1С</option></select>
-          <div className="admin-segmented"><button className={kind === "all" ? "active" : ""} onClick={() => setKind("all")}>Все</button><button className={kind === "tire" ? "active" : ""} onClick={() => setKind("tire")}>Шины</button><button className={kind === "wheel" ? "active" : ""} onClick={() => setKind("wheel")}>Диски</button></div>
-        </div>
-        <div className="admin-table-wrap">
-          <table className="admin-table products-table">
-            <thead><tr><th>Выбор</th><th>Товар</th><th>Тип / сезон</th><th>Цена</th><th>Доступно</th><th>Внешний ID</th><th>Обновлён</th></tr></thead>
-            <tbody>{products.map((product) => (
-              <tr key={product.id}>
-                <td><input type="checkbox" aria-label={`Выбрать ${product.sku}`} checked={selectedIds.includes(product.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /></td>
-                <td><div className="admin-product-cell"><MiniArt product={product} /><p><strong>{product.brand} {product.model}</strong><span>{product.subtitle}</span><small>{product.sku}</small></p></div></td>
-                <td>{product.kind === "tire" ? <><strong>Шина</strong><small>{seasonLabels[product.season]}</small></> : <><strong>Диск</strong><small>{product.color}</small></>}</td>
-                <td><strong>{formatPrice(product.price)}</strong>{product.oldPrice && <small><s>{formatPrice(product.oldPrice)}</s></small>}</td>
-                <td><span className={`inventory-pill ${product.stock - product.reserved <= 6 ? "low" : ""}`}>{product.stock - product.reserved} шт.</span><small>резерв {product.reserved}</small></td>
-                <td><code>{product.externalId || "—"}</code></td>
-                <td><span>{new Date(product.updatedAt).toLocaleDateString("ru-RU")}</span><small>{new Date(product.updatedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</small></td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-        {products.length === 0 && <div className="admin-empty"><Search /><strong>{message || "Товары не найдены"}</strong><span>Измените запрос или фильтр.</span></div>}
-        {products.length > 0 && message && <p role="alert">{message}</p>}
-        {user?.role === "admin" && selectedIds.length > 0 && <div><span>Выбрано: {selectedIds.length} </span><button onClick={() => void updateSelected("activate")}>Активировать</button><button onClick={() => void updateSelected("deactivate")}>Скрыть</button></div>}
-        <div className="admin-table-footer"><span>Показано {products.length} из {total}. Импорт обрабатывается пакетами по 1000 строк.</span><div><button disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Назад</button><span>{page} / {Math.max(totalPages, 1)}</span><button disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>Далее</button></div></div>
-      </article>
-    </>
-  );
-}
-
-function OrdersSection() {
-  const [orders, setOrders] = useState<Array<{
-    id: string;
-    number: string;
-    status: string;
-    paymentStatus: string;
-    total: number;
-    createdAt: string;
-    items: Array<{ name: string; quantity: number }>;
-  }>>([]);
-  const [message, setMessage] = useState("Загружаем заказы…");
-  const [actionMessage, setActionMessage] = useState("");
-
-  async function updateStatus(orderId: string, status: string) {
-    setActionMessage("");
-    try {
-      const response = await fetch(`/api/admin/orders/${orderId}/status`, {
-        method: "PATCH",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      const result = (await response.json()) as { message?: string };
-      if (!response.ok) throw new Error(result.message || "Статус не обновлён.");
-      setOrders((current) =>
-        current.map((order) => (order.id === orderId ? { ...order, status } : order)),
-      );
-    } catch (error) {
-      setActionMessage(error instanceof Error ? error.message : "Статус не обновлён.");
-    }
-  }
-
-  useEffect(() => {
-    const abortController = new AbortController();
-    void fetch("/api/admin/orders", {
-      credentials: "same-origin",
-      cache: "no-store",
-      signal: abortController.signal,
-    })
-      .then(async (response) => {
-        const result = (await response.json()) as {
-          items?: typeof orders;
-          message?: string;
-        };
-        if (!response.ok) throw new Error(result.message || "Заказы недоступны.");
-        setOrders(result.items ?? []);
-        setMessage("");
-      })
-      .catch((error: unknown) => {
-        if ((error as { name?: string }).name !== "AbortError") {
-          setMessage(error instanceof Error ? error.message : "Заказы недоступны.");
-        }
-      });
-    return () => abortController.abort();
-  }, []);
-
-  return (
-    <>
-      <div className="admin-page-intro"><div><p className="eyebrow">Продажи</p><h1>Заказы</h1><span>Данные загружаются из PostgreSQL через защищённый API.</span>{actionMessage && <small className="admin-login-message">{actionMessage}</small>}</div></div>
-      {message ? (
-        <article className="admin-card admin-empty"><ShoppingCart /><strong>{message}</strong></article>
-      ) : orders.length === 0 ? (
-        <article className="admin-card admin-empty"><ShoppingCart /><strong>Заказов пока нет</strong></article>
-      ) : (
-        <article className="admin-card products-card">
-          <div className="admin-table-wrap">
-            <table className="admin-table"><thead><tr><th>Номер</th><th>Дата</th><th>Состав</th><th>Статус</th><th>Сумма</th></tr></thead>
-              <tbody>{orders.map((order) => <tr key={order.id}><td><strong>{order.number}</strong></td><td>{new Date(order.createdAt).toLocaleString("ru-RU")}</td><td>{order.items.map((item) => `${item.name} × ${item.quantity}`).join(", ")}</td><td><select value={order.status} onChange={(event) => void updateStatus(order.id, event.target.value)}><option value="new">Новый</option><option value="confirmed">Подтверждён</option><option value="processing">В работе</option><option value="ready_for_pickup">Готов к выдаче</option><option value="shipped">Отправлен</option><option value="completed">Завершён</option><option value="cancelled">Отменён</option></select><small>Оплата: {order.paymentStatus}</small></td><td><strong>{formatPrice(order.total)}</strong></td></tr>)}</tbody>
-            </table>
-          </div>
-        </article>
-      )}
     </>
   );
 }
@@ -449,22 +188,6 @@ function SyncSection() {
   );
 }
 
-function SettingsSection() {
-  const configurationIssues = validateBusinessConfig(businessConfig);
-  const sellerName = getSellerDisplayName();
-
-  return (
-    <>
-      <div className="admin-page-intro"><div><p className="eyebrow">Конфигурация</p><h1>Настройки магазина</h1><span>Единый источник данных: config/business.ts и переменные окружения.</span></div></div>
-      <div className="settings-grid">
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Магазин</p><h2>Публичные данные</h2></div><Settings /></div><label><span>Бренд</span><input value={businessConfig.brandName} readOnly /></label><label><span>Продавец</span><input value={sellerName ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>Телефон</span><input value={businessConfig.contacts.phone ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>Email</span><input value={businessConfig.contacts.email ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>Адрес</span><input value={businessConfig.location.address ?? ""} placeholder="Не заполнено — требуется до запуска" readOnly /></label><label><span>График</span><input value={businessConfig.workingHours ?? ""} placeholder="Не заполнено" readOnly /></label></article>
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">Возможности</p><h2>Подтвержденные услуги</h2></div><Gauge /></div><label className="settings-switch"><span><strong>Самовывоз</strong><small>Включать только после согласования адреса и правил</small></span><input type="checkbox" checked={businessConfig.delivery.pickup.enabled} readOnly /></label><label className="settings-switch"><span><strong>Доставка по городу</strong><small>Стоимость не задана автоматически</small></span><input type="checkbox" checked={businessConfig.delivery.cityDelivery.enabled} readOnly /></label><label className="settings-switch"><span><strong>Б/у товары</strong><small>Для комплектов используются индивидуальные фото</small></span><input type="checkbox" checked={businessConfig.catalog.usedProductsEnabled} readOnly /></label><label className="settings-switch"><span><strong>Рассрочка</strong><small>Только после подключения реального провайдера</small></span><input type="checkbox" checked={businessConfig.features.installmentEnabled} readOnly /></label></article>
-        <article className="admin-card settings-card"><div className="admin-card-head"><div><p className="eyebrow">До запуска</p><h2>{configurationIssues.length} пунктов требуют внимания</h2></div><Activity /></div>{configurationIssues.map((issue) => <p key={issue.field}><strong>{issue.field}</strong><br /><small>{issue.message}</small></p>)}</article>
-      </div>
-    </>
-  );
-}
-
 export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile }) {
   const { user: hydratedUser, logout } = useStore();
   const router = useRouter();
@@ -479,6 +202,7 @@ export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile
       { id: "orders" as Section, label: "Заказы", icon: ShoppingCart },
       { id: "fitment-requests" as Section, label: "Заявки на подбор", icon: Search },
       { id: "sync" as Section, label: "Обмен с 1С", icon: RefreshCw },
+      { id: "staff" as Section, label: "Сотрудники", icon: Users },
       { id: "settings" as Section, label: "Настройки", icon: Settings },
     ],
     [],
@@ -520,6 +244,7 @@ export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile
           {section === "orders" && <OrdersSection />}
           {section === "fitment-requests" && <FitmentRequests />}
           {section === "sync" && <SyncSection />}
+          {section === "staff" && <StaffSection />}
           {section === "settings" && <SettingsSection />}
         </div>
       </section>
