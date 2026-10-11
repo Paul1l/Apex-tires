@@ -194,7 +194,7 @@ export function normalizeTelephoneHref(phone: string): string {
 }
 
 export function getEnabledDeliveryMethods(
-  config: BusinessConfig = businessConfig,
+  config: { readonly delivery: BusinessConfig["delivery"] } = businessConfig,
 ): Array<"pickup" | "courier" | "transport_company"> {
   const methods: Array<"pickup" | "courier" | "transport_company"> = [];
   if (config.delivery.pickup.enabled) methods.push("pickup");
