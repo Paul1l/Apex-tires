@@ -5841,43 +5841,34 @@ footer {
   }
 }
 
-/* A11Y-11: touch targets of at least 40×40 px on phones and touch screens.
-   The visible icons keep their size and position: the button box grows
-   around the drawn circle (card actions, menu button) or a transparent
-   ::after layer extends the clickable area (buttons with a visible frame
-   inside a dense layout). */
+/* A11Y-11: larger touch targets on phones and touch screens. The buttons
+   keep their look and size; a transparent ::after layer extends the area
+   that accepts taps (the menu button has no visible frame, its box grows). */
 @media (max-width: 760px), (pointer: coarse) {
-  .product-actions {
-    gap: 0;
-    margin: -5.5px -5.5px -5.5px 0;
-  }
-
+  /* Card "Сравнить" / "В избранное": 27px (29px on tablets) circles 4px
+     apart. Their areas are 36×40 px: 40px tall; along the row they meet
+     halfway between the circles (2px = half the gap), so they never
+     overlap, and reach 36px by extending further on the outer side. */
   .product-actions button {
     position: relative;
-    z-index: 0;
-    width: 40px;
-    height: 40px;
-    border: 0;
-    border-radius: 50%;
-    background: transparent;
   }
 
-  .product-actions button::before {
+  .product-actions button::after {
     content: "";
     position: absolute;
-    z-index: -1;
-    inset: 5.5px;
-    border: 1px solid var(--line);
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.9);
+    top: 50%;
+    width: 36px;
+    height: 40px;
+    transform: translateY(-50%);
   }
 
-  .product-actions button.active::before {
-    border-color: var(--sand-dark);
+  /* Offsets from the padding edge: 1px border + 2px (half the gap). */
+  .product-actions button:first-child::after {
+    right: -3px;
   }
 
-  .product-actions button:focus-visible {
-    outline-offset: -3.5px;
+  .product-actions button:last-child::after {
+    left: -3px;
   }
 
   .quantity button,
@@ -5899,23 +5890,10 @@ footer {
     transform: translate(-50%, -50%);
   }
 
-  /* 34px buttons: a slightly wider gap keeps their 40px areas apart. */
-  .collection-actions {
-    gap: 7px;
-  }
-}
-
-@media (max-width: 760px) {
-  .product-actions {
-    margin: -6.5px -6.5px -6.5px 0;
-  }
-
-  .product-actions button::before {
-    inset: 6.5px;
-  }
-
-  .product-actions button:focus-visible {
-    outline-offset: -4.5px;
+  /* Favourites / comparison: 34px buttons 5px apart (unchanged look); the
+     areas are 40×39 px, so the two meet halfway in the gap without overlap. */
+  .collection-actions button::after {
+    height: 39px;
   }
 }
 
