@@ -32,7 +32,7 @@ const tire: CheckoutProductRow = {
 };
 
 function service(product: CheckoutProductRow, reserveStock?: OrderServiceDependencies["orderRepository"]["reserveStock"]) {
-  const database = { async query() { return { rows: [] }; }, release() {} };
+  const database = { async query() { return { rows: [] }; }, release() {}, on() {}, removeListener() {} };
   const pool = { async connect() { return database; } } as unknown as Pool;
   return new OrderService({
     pool,

@@ -2,7 +2,8 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readEnvironment } from "../config/environment";
-import { createPostgresPool } from "./postgres-client";
+import { sanitizeError } from "../types/common";
+import { checkOutClient, createPostgresPool, rollbackQuietly } from "./postgres-client";
 
 const migrationsDirectory = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,7 +17,11 @@ async function main(): Promise<void> {
   const pool = createPostgresPool(environment);
 
   try {
-    const client = await pool.connect();
+    // The listener of checkOutClient keeps a lost connection from crashing
+    // the process with an unhandled "error" event; the failed query rejects
+    // and the migration error below is reported instead.
+    const connection = await checkOutClient(pool);
+    const { client } = connection;
     try {
       await client.query("SELECT pg_advisory_lock(hashtext('apex_wheels_migrations'))");
       await client.query(
@@ -48,13 +53,18 @@ async function main(): Promise<void> {
           await client.query("COMMIT");
           process.stdout.write(`Applied ${migrationFile}\n`);
         } catch (error) {
-          await client.query("ROLLBACK");
+          await rollbackQuietly(connection);
+          console.error(`Migration ${migrationFile} was not applied`);
           throw error;
         }
       }
     } finally {
-      await client.query("SELECT pg_advisory_unlock(hashtext('apex_wheels_migrations'))");
-      client.release();
+      // On a lost connection the session lock is already gone; a failed
+      // unlock must not replace the original error.
+      await client
+        .query("SELECT pg_advisory_unlock(hashtext('apex_wheels_migrations'))")
+        .catch((unlockError: unknown) => connection.markBroken(unlockError));
+      connection.release();
     }
   } finally {
     await pool.end();
@@ -62,6 +72,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(error);
+  console.error("Migrations stopped", sanitizeError(error));
   process.exitCode = 1;
 });

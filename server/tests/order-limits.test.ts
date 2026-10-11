@@ -36,7 +36,7 @@ test("duplicate lines cannot exceed the per-product maximum after aggregation", 
 });
 
 function createService(options: { activeOrders?: number; maximumActiveReservationsPerContact?: number } = {}) {
-  const database = { async query() { return { rows: [] }; }, release() {} };
+  const database = { async query() { return { rows: [] }; }, release() {}, on() {}, removeListener() {} };
   const pool = { async connect() { return database; } } as unknown as Pool;
   const contacts: Array<{ phone: string; email?: string | null }> = [];
   let created = 0;

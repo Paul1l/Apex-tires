@@ -178,9 +178,10 @@ export class VehicleReferenceService {
     );
   }
 
-  getModels(makeName: string, year: number): Promise<VehicleReferenceResult<VehicleModel>> {
+  /** Without a year (or before 1995) all models of the make are listed. */
+  getModels(makeName: string, year?: number): Promise<VehicleReferenceResult<VehicleModel>> {
     const normalizedMakeName = normalizeVehicleMakeName(makeName);
-    const modelYear = year >= FIRST_VPIC_MODEL_YEAR ? year : null;
+    const modelYear = year !== undefined && year >= FIRST_VPIC_MODEL_YEAR ? year : null;
     return this.cached(
       this.models,
       `models:${normalizedMakeName}:${modelYear ?? "all"}`,

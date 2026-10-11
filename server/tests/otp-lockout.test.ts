@@ -63,7 +63,7 @@ function createHarness(options: { maximumFailures?: number } = {}) {
     async findUserBySessionTokenHash() { return null; },
     async deleteSessionByTokenHash() {},
   };
-  const database = { async query() { return { rows: [] }; }, release() {} };
+  const database = { async query() { return { rows: [] }; }, release() {}, on() {}, removeListener() {} };
   const pool = { async connect() { return database; } } as unknown as Pool;
   const service = new AuthService({
     pool,

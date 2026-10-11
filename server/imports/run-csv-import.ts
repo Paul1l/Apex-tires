@@ -5,6 +5,7 @@ import { readEnvironment } from "../config/environment";
 import { ProductRepository } from "../repositories/product-repository";
 import { AdminAuditRepository } from "../repositories/admin-audit-repository";
 import { CatalogImportService } from "../services/catalog-import-service";
+import { sanitizeError } from "../types/common";
 import path from "node:path";
 
 async function main() {
@@ -21,4 +22,12 @@ async function main() {
     if (!report.ok) process.exitCode=1;
   } finally { await pool.end(); }
 }
-main().catch((error:unknown)=>{console.error(error instanceof Error ? error.message : "Import failed");process.exitCode=1;});
+// One line without stack or row data, e.g. after a lost database connection:
+// "CSV import failed: terminating connection due to administrator command [57P01]".
+// Batches committed before the failure stay; rerun the import after fixing the cause.
+main().catch((error:unknown)=>{
+  const summary=sanitizeError(error);
+  const code=typeof summary.code==="string" ? ` [${summary.code}]` : "";
+  console.error(`CSV import failed: ${typeof summary.message==="string" ? summary.message : "unknown error"}${code}`);
+  process.exitCode=1;
+});

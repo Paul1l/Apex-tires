@@ -11,20 +11,26 @@ import {
   getVehicleReferenceService,
   vehicleReferenceCacheControl,
 } from "@/server/services/vehicle-reference-service";
+import { parseOptionalVehicleYear } from "@/server/validators/vehicle-query";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Returns model names for a selected make and model year. Database catalog:
- * models with verified fitments. Preview: vPIC (reliable from 1995) merged
- * with the regional list, served from the server cache; `source` is
- * "regional-fallback" when vPIC is unavailable or has no such models.
+ * Returns model names for a selected make and, optionally, model year: an
+ * absent or empty `year` («Не уточнять год») lists models of all years and
+ * the response has `year: null`. Database catalog: models with verified
+ * fitments. Preview: vPIC (reliable from 1995) merged with the regional list,
+ * served from the server cache; `source` is "regional-fallback" when vPIC is
+ * unavailable or has no such models.
  */
 export async function GET(request: NextRequest) {
   const makeName = request.nextUrl.searchParams.get("make")?.trim() ?? "";
-  const requestedYear = Number(request.nextUrl.searchParams.get("year"));
-  const maximumYear = new Date().getUTCFullYear() + 1;
+  const yearParameter = parseOptionalVehicleYear(
+    request.nextUrl.searchParams.get("year"),
+    1950,
+    new Date().getUTCFullYear() + 1,
+  );
 
   if (!makeName || makeName.length > 100) {
     return NextResponse.json(
@@ -32,16 +38,13 @@ export async function GET(request: NextRequest) {
       { status: 422 },
     );
   }
-  if (
-    !Number.isInteger(requestedYear) ||
-    requestedYear < 1950 ||
-    requestedYear > maximumYear
-  ) {
+  if (!yearParameter.valid) {
     return NextResponse.json(
       { ok: false, code: "INVALID_YEAR", message: "Укажите корректный год." },
       { status: 422 },
     );
   }
+  const requestedYear = yearParameter.year;
 
   if (businessConfig.catalog.dataMode === "database") {
     if (!databaseIsConfigured()) {
@@ -64,7 +67,7 @@ export async function GET(request: NextRequest) {
           ok: true,
           source: "postgresql",
           make: makeName,
-          year: requestedYear,
+          year: requestedYear ?? null,
           items: sortVehicleModels(
             models.map((name) => ({ id: name.toLocaleLowerCase("ru"), name })),
           ),
@@ -93,7 +96,7 @@ export async function GET(request: NextRequest) {
       ok: true,
       source: result.source,
       make: makeName,
-      year: requestedYear,
+      year: requestedYear ?? null,
       items: result.items,
     },
     {

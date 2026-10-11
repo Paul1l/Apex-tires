@@ -83,6 +83,24 @@ export class CatalogImportService {
     private readonly fitmentRepository = new FitmentRepository(),
   ) {}
 
+  /**
+   * Records an interrupted import. If the database is still unavailable (the
+   * usual reason for the interruption) the status cannot be saved; that is
+   * logged and the original error goes to the caller.
+   */
+  private async markJobFailed(jobId: string, error: unknown): Promise<void> {
+    try {
+      await this.importJobRepository.finish(
+        this.pool,
+        jobId,
+        "failed",
+        error instanceof Error ? error.message.slice(0, 500) : "Импорт прерван.",
+      );
+    } catch (finishError) {
+      applicationLogger.error({ error: finishError, jobId }, "Import job status was not saved");
+    }
+  }
+
   async importFitmentsCsvStream(
     stream: ReadableStream<Uint8Array>,
     filename: string,
@@ -198,7 +216,7 @@ export class CatalogImportService {
       }
       return report;
     } catch (error) {
-      await this.importJobRepository.finish(this.pool, jobId, "failed", error instanceof Error ? error.message.slice(0, 500) : "Импорт прерван.");
+      await this.markJobFailed(jobId, error);
       throw error;
     }
   }
@@ -327,12 +345,7 @@ export class CatalogImportService {
       }
       return report;
     } catch (error) {
-      await this.importJobRepository.finish(
-        this.pool,
-        jobId,
-        "failed",
-        error instanceof Error ? error.message.slice(0, 500) : "Импорт прерван.",
-      );
+      await this.markJobFailed(jobId, error);
       throw error;
     }
   }

@@ -18,6 +18,9 @@ function createTransactionPool() {
       return { rows: [] };
     },
     release() {},
+    // EventEmitter methods of a pg PoolClient (withTransaction listens for "error").
+    on() {},
+    removeListener() {},
   };
   return {
     async connect() {
