@@ -86,7 +86,8 @@ production-БД в репозитории нет.
 ## Production checklist
 
 1. Получить реквизиты ИП и провести юридическую проверку документов.
-2. Разместить Next.js и PostgreSQL в РФ; применить production-миграции.
+2. Разместить Next.js и PostgreSQL в РФ; применить production-миграции
+   (`pnpm db:migrate`, сейчас 001–008).
 3. Подключить production PostgreSQL; каталог, CSV-import, корзина, заказы и
    административные статусы уже имеют защищённый server API.
 4. Подключить email OTP к российской БД и Yandex Cloud Postbox, проверить
@@ -97,3 +98,11 @@ production-БД в репозитории нет.
 8. Задать секрет обмена и включить регламентные задания после staging-теста.
 9. Создать счетчик Метрики и задать `YANDEX_METRIKA_COUNTER_ID`.
 10. Выполнить нагрузочные, security, backup/restore и приемочные тесты.
+11. Задать обязательные переменные из `.env.example`: `TRUSTED_PROXY=nginx`
+    (иначе лимиты по IP отключены), `OTP_CODE_PEPPER`, `INTERNAL_JOB_SECRET`;
+    при необходимости — `ONEC_ALLOWED_IPS`. Ошибки конфигурации видны в журнале
+    при старте (`[config] ОШИБКА`).
+12. Перенастроить cron на `deploy/scripts/run-internal-job.sh` (задания
+    `/api/internal/*` закрыты снаружи в nginx) — см. `docs/VDS_DEPLOYMENT.md`.
+13. Решить вопросы из раздела «Требует решения владельца» в `docs/SITE_AUDIT.md`
+    (CAPTCHA, срок резерва, письма, роли, «Под заказ»).
