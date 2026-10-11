@@ -1,4 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#161816"/>
-  <path d="M18 9h7L15 55H8L18 9Zm14 0h7L29 55h-7L32 9Zm14 0h7L43 55h-7L46 9Z" fill="#d4b481"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 34 34">
+  <!-- The header mark (.logo-mark, 34px): ink circle, three sand bars 4x27 skewed by -22deg. -->
+  <defs>
+    <clipPath id="c"><circle cx="17" cy="17" r="17"/></clipPath>
+  </defs>
+  <circle cx="17" cy="17" r="17" fill="#161816"/>
+  <g clip-path="url(#c)" fill="#d4b481">
+    <rect x="8" y="3.5" width="4" height="27" transform="translate(10 17) skewX(-22) translate(-10 -17)"/>
+    <rect x="16" y="3.5" width="4" height="27" transform="translate(18 17) skewX(-22) translate(-18 -17)"/>
+    <rect x="24" y="3.5" width="4" height="27" transform="translate(26 17) skewX(-22) translate(-26 -17)"/>
+  </g>
 </svg>

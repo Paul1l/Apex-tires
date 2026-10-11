@@ -3,7 +3,9 @@ import test from "node:test";
 import { businessConfig, type BusinessConfig } from "../../config/business.js";
 import type { ProductDetails } from "../../lib/types.js";
 import {
+  DEFAULT_OPEN_GRAPH_IMAGE,
   SCHEMA_AVAILABILITY,
+  createBaseOpenGraph,
   createBreadcrumbListJsonLd,
   createPageSeoMetadata,
   createProductJsonLd,
@@ -287,6 +289,22 @@ test("page metadata: self-canonical and og:url keep site-wide Open Graph default
 
   const product = createPageSeoMetadata("/tires/x", { image: "/assets/x.jpg" });
   assert.deepEqual((product.openGraph as { images: string[] }).images, ["/assets/x.jpg"]);
+});
+
+test("Open Graph: the site image 1200x630 is the default for the layout, pages and products without a photo", () => {
+  const config = { brandName: "APEX WHEELS", branding: { openGraphImageSource: null } };
+  assert.deepEqual(createBaseOpenGraph(config).images, [DEFAULT_OPEN_GRAPH_IMAGE]);
+  assert.equal(DEFAULT_OPEN_GRAPH_IMAGE.url, "/opengraph-image.jpg");
+  assert.equal(DEFAULT_OPEN_GRAPH_IMAGE.width, 1200);
+  assert.equal(DEFAULT_OPEN_GRAPH_IMAGE.height, 630);
+  assert.ok(DEFAULT_OPEN_GRAPH_IMAGE.alt.length > 0);
+
+  const page = createPageSeoMetadata("/shiny", { config });
+  assert.deepEqual((page.openGraph as { images: unknown[] }).images, [DEFAULT_OPEN_GRAPH_IMAGE]);
+  const productWithoutPhoto = createPageSeoMetadata("/tires/x", { image: undefined, config });
+  assert.deepEqual((productWithoutPhoto.openGraph as { images: unknown[] }).images, [DEFAULT_OPEN_GRAPH_IMAGE]);
+  const productWithPhoto = createPageSeoMetadata("/tires/x", { image: "/assets/x.jpg", config });
+  assert.deepEqual((productWithPhoto.openGraph as { images: unknown[] }).images, ["/assets/x.jpg"]);
 });
 
 test("formatWorkingHours shows schema.org hours in Russian and keeps free text", () => {

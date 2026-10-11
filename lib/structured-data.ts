@@ -376,14 +376,32 @@ type OpenGraphConfig = Pick<BusinessConfig, "brandName"> & {
   branding: Pick<BusinessConfig["branding"], "openGraphImageSource">;
 };
 
-/** Open Graph defaults shared by the root layout and pages. */
+/**
+ * Site-wide Open Graph image: app/opengraph-image.jpg, which Next.js serves at
+ * this path. It is referenced here instead of relying on the file convention:
+ * Next.js applies a file-based image only to the segment that has it, and the
+ * `openGraph` of every page (createPageSeoMetadata) would replace it. The alt
+ * text repeats the text on the image.
+ */
+export const DEFAULT_OPEN_GRAPH_IMAGE = {
+  url: "/opengraph-image.jpg",
+  width: 1200,
+  height: 630,
+  type: "image/jpeg",
+  alt: "APEX WHEELS — шины и диски в Барнауле",
+} as const;
+
+/**
+ * Open Graph defaults shared by the root layout and pages. The image is the
+ * configured one (NEXT_PUBLIC_OPEN_GRAPH_IMAGE_SOURCE) or the site default.
+ */
 export function createBaseOpenGraph(config: OpenGraphConfig = businessConfig) {
   const image = config.branding.openGraphImageSource;
   return {
     type: "website" as const,
     siteName: config.brandName,
     locale: "ru_RU",
-    ...(image ? { images: [image] } : {}),
+    images: [image ?? { ...DEFAULT_OPEN_GRAPH_IMAGE }],
   };
 }
 

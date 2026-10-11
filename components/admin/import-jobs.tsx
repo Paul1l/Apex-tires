@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 interface ImportJob {
   id: string; filename: string; status: string; processed_rows: number;
   created_rows: number; updated_rows: number; failed_rows: number;
+  /** Why the import stopped or what failed (e.g. a stale job marked as failed). */
+  error_summary: string | null;
 }
 const statuses: Record<string, string> = { queued: "В очереди", processing: "Обрабатывается", completed: "Завершён", completed_with_errors: "Завершён с ошибками", failed: "Прерван" };
 
@@ -26,7 +28,7 @@ export function ImportJobs() {
   }, []);
   return <article className="admin-card"><h2>Последние импорты</h2>{error && <p role="alert">{error}</p>}
     <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Файл</th><th>Статус</th><th>Обработано</th><th>Создано / обновлено</th><th>Ошибки</th></tr></thead>
-      <tbody>{jobs.map((job) => <tr key={job.id}><td>{job.filename}</td><td>{statuses[job.status] || job.status}</td><td>{job.processed_rows}</td><td>{job.created_rows} / {job.updated_rows}</td><td>{job.failed_rows > 0 ? <a href={`/api/admin/imports/jobs/${job.id}/errors`}>Скачать CSV ({job.failed_rows})</a> : "—"}</td></tr>)}</tbody></table></div>
+      <tbody>{jobs.map((job) => <tr key={job.id}><td>{job.filename}</td><td>{statuses[job.status] || job.status}{job.error_summary && <small>{job.error_summary}</small>}</td><td>{job.processed_rows}</td><td>{job.created_rows} / {job.updated_rows}</td><td>{job.failed_rows > 0 ? <a href={`/api/admin/imports/jobs/${job.id}/errors`}>Скачать CSV ({job.failed_rows})</a> : "—"}</td></tr>)}</tbody></table></div>
     {!jobs.length && !error && <p>Импорты ещё не запускались.</p>}
   </article>;
 }
