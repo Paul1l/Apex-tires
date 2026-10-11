@@ -29,6 +29,7 @@
     "pg-protocol": "1.16.0",
     "pg-types": "2.2.0",
     "pgpass": "1.0.6",
+    "qrcode-generator": "2.0.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "styled-jsx": "5.1.7",
