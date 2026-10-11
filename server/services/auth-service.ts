@@ -22,6 +22,7 @@ import {
   type AuthenticatedUserRow,
   type UserRole,
 } from "../repositories/auth-repository";
+import { effectiveSessionRole } from "../security/staff-roles";
 import { ApplicationError } from "../utils/errors";
 import type { DatabaseExecutor } from "../types/common";
 
@@ -383,7 +384,8 @@ export class AuthService {
       return {
         token,
         expiresInSeconds: SESSION_LIFETIME_SECONDS,
-        user: toUserProfile(user),
+        // An email-code session never grants staff rights (staff sign in at /admin).
+        user: toUserProfile({ ...user, role: effectiveSessionRole(user.role, "customer_otp") }),
       };
     });
     if ("error" in verificationResult) throw verificationResult.error;
@@ -412,7 +414,11 @@ export class AuthService {
       }
       return null;
     }
-    return toUserProfile(sessionUser);
+    // The role this session grants: staff roles only through a staff sign-in.
+    return toUserProfile({
+      ...sessionUser,
+      role: effectiveSessionRole(sessionUser.role, sessionUser.auth_method),
+    });
   }
 
   async revokeSession(token: string): Promise<void> {

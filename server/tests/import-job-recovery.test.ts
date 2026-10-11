@@ -204,7 +204,7 @@ test("admin job list closes stale jobs before reading", async () => {
     query: async (text: string, values?: unknown[]) => {
       statements.push({ text, values });
       if (text.includes("FROM sessions")) {
-        return { rows: [{ session_id: "s", expires_at: new Date(Date.now() + 60_000), id: "u", email: "a@example.com", phone: null, name: "A", role: "admin", status: "active" }] };
+        return { rows: [{ session_id: "s", expires_at: new Date(Date.now() + 60_000), id: "u", email: "a@example.com", phone: null, name: "A", role: "admin", status: "active", auth_method: "staff_totp" }] };
       }
       return { rows: [] };
     },

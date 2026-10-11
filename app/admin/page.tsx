@@ -1,12 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { AdminDashboard } from "@/components/admin-dashboard";
-import { AUTHENTICATION_COOKIE_NAME } from "@/lib/auth/session";
-import {
-  authenticationSessionsAreConfigured,
-  createApplicationServices,
-} from "@/server/bootstrap/application-services";
+import { StaffLoginForm } from "@/components/admin/staff-login-form";
+import { getStaffPageAccess } from "@/server/security/staff-page-guard";
 
 export const metadata: Metadata = {
   title: "Панель управления магазином",
@@ -33,21 +29,32 @@ function AccessMessage({ message }: { message: string }) {
 }
 
 export default async function AdminPage() {
-  if (!authenticationSessionsAreConfigured()) {
+  const access = await getStaffPageAccess();
+  if (access.status === "not_configured") {
     return (
       <AccessMessage message="PostgreSQL и серверные сессии пока не настроены. Демо-доступ отключён." />
     );
   }
-  const sessionToken = (await cookies()).get(AUTHENTICATION_COOKIE_NAME)?.value;
-  if (!sessionToken) {
-    return <AccessMessage message="Войдите по коду из письма на главной странице." />;
+  if (access.status === "allowed") {
+    return <AdminDashboard authorizedUser={access.user} />;
   }
-  const user =
-    await createApplicationServices().authService?.getUserBySessionToken(
-      sessionToken,
-    );
-  if (!user || (user.role !== "admin" && user.role !== "manager")) {
-    return <AccessMessage message="Для этой учетной записи доступ к админ-панели запрещён." />;
-  }
-  return <AdminDashboard authorizedUser={user} />;
+  // Signed out, or signed in only as a customer (email code): staff rights
+  // need the authenticator sign-in.
+  return (
+    <main className="admin-login-page">
+      <Link className="admin-back" href="/">
+        ← В магазин
+      </Link>
+      <section className="admin-login-card" aria-labelledby="staff-login-title">
+        <p className="eyebrow">Закрытая зона</p>
+        <h1 id="staff-login-title">Вход для сотрудников</h1>
+        <p>
+          {access.status === "forbidden"
+            ? "Вы вошли как покупатель. Для работы в админке войдите с кодом из приложения-аутентификатора."
+            : "Введите рабочий email и 6-значный код из приложения-аутентификатора."}
+        </p>
+        <StaffLoginForm />
+      </section>
+    </main>
+  );
 }

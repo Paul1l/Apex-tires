@@ -1,0 +1,271 @@
+.layout {
+  display: grid;
+  gap: 12px;
+}
+
+.notice {
+  margin: 0;
+  border: 1px solid #dfe2dd;
+  border-radius: 5px;
+  background: #fff;
+  padding: 14px 18px;
+  color: #50554e;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.error {
+  border-color: #ecc9c2;
+  background: #fbf1ef;
+  color: #9a433b;
+}
+
+.success {
+  border-color: #cfe2d4;
+  background: #f1f7f2;
+  color: #3f6e4f;
+}
+
+.addForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 0.8fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.addForm label {
+  display: grid;
+  gap: 5px;
+}
+
+.addForm label span {
+  color: #6f746d;
+  font-size: 7px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.addForm input,
+.addForm select {
+  min-width: 0;
+  height: 40px;
+  border: 1px solid #dce0da;
+  border-radius: 4px;
+  outline: 0;
+  background: #fff;
+  padding: 0 10px;
+  font-size: 9px;
+}
+
+.addForm input:focus-visible,
+.addForm select:focus-visible,
+.rowControls select:focus-visible,
+.rowControls button:focus-visible,
+.dialogActions a:focus-visible,
+.dialogActions button:focus-visible {
+  outline: 2px solid #b89865;
+  outline-offset: 1px;
+}
+
+.formHint {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #82877f;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.person strong {
+  display: block;
+  font-size: 9px;
+}
+
+.person small {
+  display: block;
+  margin-top: 3px;
+  color: #82877f;
+  font-size: 8px;
+  word-break: break-all;
+}
+
+.you {
+  display: inline-block;
+  margin-left: 6px;
+  border-radius: 20px;
+  background: #ece7f2;
+  padding: 2px 6px;
+  color: #715b86;
+  font-size: 7px;
+  font-weight: 800;
+}
+
+.rowControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rowControls select {
+  height: 32px;
+  border: 1px solid #dce0da;
+  border-radius: 4px;
+  background: #fff;
+  padding: 0 6px;
+  font-size: 8px;
+}
+
+.rowControls button {
+  min-height: 32px;
+  border: 1px solid #d8dcd6;
+  border-radius: 4px;
+  background: #fff;
+  padding: 0 10px;
+  color: #20231f;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.rowControls button.danger {
+  border-color: #ecc9c2;
+  color: #9a433b;
+}
+
+.rowControls button:disabled,
+.rowControls select:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 20px;
+  padding: 4px 8px;
+  font-size: 7px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.badgeOk {
+  background: #e5f1e8;
+  color: #4a805d;
+}
+
+.badgeWait {
+  background: #f2e8d7;
+  color: #8a6634;
+}
+
+.badgeBad {
+  background: #f3dddd;
+  color: #9a433b;
+}
+
+.badgeMuted {
+  background: #eef0ed;
+  color: #6f746d;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.overlay {
+  position: fixed;
+  z-index: 300;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  background: rgba(14, 16, 14, 0.66);
+  padding: 20px;
+}
+
+.dialog {
+  width: min(100%, 460px);
+  border-radius: 7px;
+  background: #f6f7f5;
+  padding: 26px;
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.35);
+}
+
+.dialog h2 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+
+.dialog p {
+  margin: 8px 0 0;
+  color: #50554e;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.qr {
+  display: block;
+  width: min(100%, 240px);
+  height: auto;
+  margin: 18px auto 0;
+  border: 1px solid #dfe2dd;
+  border-radius: 5px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+.secretLabel {
+  display: block;
+  margin-top: 16px;
+  color: #6f746d;
+  font-size: 7px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.secret {
+  display: block;
+  margin-top: 6px;
+  border: 1px solid #dce0da;
+  border-radius: 4px;
+  background: #fff;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  user-select: all;
+  word-break: break-all;
+}
+
+.warning {
+  border-left: 3px solid #b89865;
+  padding-left: 10px;
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.empty {
+  margin: 0;
+  padding: 18px 20px;
+  color: #82877f;
+  font-size: 9px;
+}
+
+@media (max-width: 860px) {
+  .addForm {
+    grid-template-columns: 1fr;
+  }
+
+  .addForm button {
+    width: 100%;
+  }
+}

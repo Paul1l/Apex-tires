@@ -34,3 +34,15 @@ export function normalizeEmailForLimits(email: string | null | undefined): strin
   const normalized = email?.trim().toLowerCase();
   return normalized ? normalized : null;
 }
+
+/**
+ * Staff sign-in with an authenticator code (POST /api/auth/staff/login).
+ * Fixed defensive limits on top of the account lockout (5 wrong codes →
+ * 15 minutes): every attempt counts, successful or not, for the client
+ * address and for the email typed (existing or not, so the limit reveals
+ * nothing about which addresses belong to staff).
+ */
+export const STAFF_LOGIN_RATE_LIMITS = {
+  perIp: { scope: "staff-login:ip", limit: 20, windowSeconds: 900 },
+  perEmail: { scope: "staff-login:email", limit: 10, windowSeconds: 900 },
+} as const satisfies Record<string, RateLimitRule>;

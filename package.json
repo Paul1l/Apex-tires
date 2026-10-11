@@ -9,6 +9,7 @@
     "perf:catalog": "tsx server/performance/check-catalog.ts",
     "import:csv": "tsx server/imports/run-csv-import.ts",
     "images:tires": "tsx server/tools/export-tire-illustrations.ts",
+    "admin:create": "tsx server/tools/create-staff.ts",
     "build": "next build --webpack",
     "build:worker": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",

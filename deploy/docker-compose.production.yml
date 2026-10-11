@@ -121,6 +121,11 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       DATABASE_SSL_MODE: disable
+      # For `run --rm migrate pnpm admin:create -- …` (docs/AUTHENTICATION.md):
+      # the staff key is encrypted with a key derived from the same pepper as
+      # the app, and the authenticator app shows the brand name.
+      OTP_CODE_PEPPER: ${OTP_CODE_PEPPER}
+      NEXT_PUBLIC_BRAND_NAME: ${NEXT_PUBLIC_BRAND_NAME}
     depends_on:
       postgres:
         condition: service_healthy
