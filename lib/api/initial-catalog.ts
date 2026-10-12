@@ -17,8 +17,8 @@ import {
  * products, facets and links to product pages are present in the HTML.
  *
  * Uses the same query contract and service call as `GET /api/v1/products`.
- * Returns null in preview mode or without a database; the storefront then
- * loads the catalog in the browser. A database error never breaks the page:
+ * Returns null in preview mode, without a database and during `next build`;
+ * the storefront then loads the catalog in the browser. A database error never breaks the page:
  * while building (or in development) the page is rendered without products,
  * and when a cached page is regenerated in production the previous version
  * stays in use (see the catch block).
@@ -29,6 +29,10 @@ export async function loadInitialCatalog(
   if (businessConfig.catalog.dataMode !== "database" || !databaseIsConfigured()) {
     return null;
   }
+  // `next build` never waits for a database (QA-40): pages are prerendered
+  // without products and the deployment resets the cache afterwards
+  // (internal job site-revalidation, docs/VDS_DEPLOYMENT.md).
+  if (process.env.NEXT_PHASE === "phase-production-build") return null;
   const parameters = buildCatalogSearchParams(createDefaultCatalogFilters(kind), 1);
   try {
     const result = await createApplicationServices().catalogService.getCatalogPage(

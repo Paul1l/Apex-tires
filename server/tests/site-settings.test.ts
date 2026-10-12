@@ -107,3 +107,26 @@ test("the build never reads settings from the database (QA-38)", async () => {
     if (previous.url === undefined) delete environment.DATABASE_URL;
   }
 });
+
+test("phones and single-line fields reject tabs, line breaks, VT and FF (QA-41)", () => {
+  const cases: Array<[string, (input: ReturnType<typeof getDefaultSiteSettings>) => void]> = [
+    ["contacts.phone", (input) => { input.contacts.phone = "+7 (3852) 55\u000b66-78"; }],
+    ["contacts.phone", (input) => { input.contacts.phone = "+7 (3852) 55\u000c66-78"; }],
+    ["contacts.additionalPhones.0", (input) => { input.contacts.additionalPhones = ["+7 3852\t556678"]; }],
+    ["location.address", (input) => { input.location.address = "Барнаул,\nул. Попова, 1"; }],
+    ["workingHours", (input) => { input.workingHours = "Пн–Пт\t9–19"; }],
+    ["contacts.telegram", (input) => { input.contacts.telegram = "https://t.me/sh\nop"; }],
+    ["services.other.0", (input) => { input.services.other = ["Правка\r\nдисков"]; }],
+  ];
+  for (const [path, mutate] of cases) {
+    const input = structuredClone(getDefaultSiteSettings());
+    mutate(input);
+    const result = siteSettingsSchema.safeParse(input);
+    assert.equal(result.success, false, path);
+    if (!result.success) assert.equal(result.error.issues[0].path.join("."), path);
+  }
+  const valid = structuredClone(getDefaultSiteSettings());
+  valid.contacts.phone = "+7 (3852) 55-66-78";
+  valid.contacts.additionalPhones = ["8 913 123 45 67"];
+  assert.equal(siteSettingsSchema.safeParse(valid).success, true);
+});
