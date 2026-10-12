@@ -4,6 +4,11 @@
 #   sh /opt/apex/deploy/scripts/run-internal-job.sh notifications
 #   sh /opt/apex/deploy/scripts/run-internal-job.sh reservations
 #
+# and once after every deployment that recreates the app container, to
+# rebuild the pages prerendered without a database at build time:
+#
+#   sh /opt/apex/deploy/scripts/run-internal-job.sh site-revalidation
+#
 # The request is made inside the app container to http://127.0.0.1:3000,
 # bypassing nginx (where /api/internal/ is closed to outside clients).
 # X-Job-Key is read from INTERNAL_JOB_SECRET in the container environment, so
@@ -16,7 +21,7 @@ set -eu
 job="${1:-}"
 case "$job" in
   '' | -* | *[!a-z0-9-]*)
-    echo "usage: $0 <job>  (notifications, reservations, ...)" >&2
+    echo "usage: $0 <job>  (notifications, reservations, site-revalidation, catalog-revalidation)" >&2
     exit 2
     ;;
 esac

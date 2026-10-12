@@ -12,7 +12,9 @@
 6. Контакты и реквизиты `NEXT_PUBLIC_*` (телефон, email, адрес магазина,
    данные продавца) обязательны: без них production-сборка остановится
    (`assertProductionBusinessConfig`). После запуска данные магазина правятся
-   в админке, а эти значения остаются запасными («Первый запуск», шаг 7).
+   в админке, но значения из сборки по-прежнему видны на сайте до сброса кэша
+   после каждой выкладки и когда база недоступна, поэтому их держат
+   актуальными (см. «Сброс кэша страниц после запуска»).
 7. По желанию: `PRODUCT_IMAGE_MAX_BYTES` и `PRODUCT_IMAGE_MAX_COUNT` (пусто —
    5 МБ и 10 фото на товар, см. «Фото товаров»). `UPLOADS_DIR` в
    `.env.production` не задаётся: его фиксирует compose-файл.
@@ -81,7 +83,21 @@
    При первом `up` создаётся том фото `uploads` (см. «Фото товаров»). Входить
    в админку до перехода на HTTPS не нужно.
 
-6. **Вход в админку.** Открыть `https://<домен>/admin`, ввести email и
+6. **Сброс кэша страниц — обязательно после каждого `up -d`.** Образ собран
+   без базы, и до сброса страницы показывают контакты и доставку из сборки и
+   пустой каталог (раздел «Сброс кэша страниц после запуска»). Дождаться, когда
+   приложение отвечает и база доступна, и выполнить задание:
+
+   ```bash
+   until docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T app \
+     node -e 'fetch("http://127.0.0.1:3000/api/health").then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))'
+   do sleep 3; done
+   sh deploy/scripts/run-internal-job.sh site-revalidation
+   ```
+
+   Успех — без вывода.
+
+7. **Вход в админку.** Открыть `https://<домен>/admin`, ввести email и
    6-значный код из приложения. Браузер, с которого вошли, становится
    «доверенным устройством» на 90 дней: чужие неверные попытки с вашим email
    не закрывают вход с него. Входите с личного устройства. Если телефон с
@@ -89,31 +105,36 @@
    «Сотрудники», а для последнего администратора повторяют шаг 4. Менеджеров
    и других администраторов добавляют в разделе «Сотрудники».
 
-7. **Данные магазина.** Админка → «Настройки» (`/admin?section=settings`):
+8. **Данные магазина.** Админка → «Настройки» (`/admin?section=settings`):
    контакты, адрес и карта, часы работы, доставка, услуги
-   (`docs/SITE_SETTINGS.md`). Сохраняет только администратор. После первого
-   сохранения витрина, документы и проверка заказа берут эти значения из
-   базы; переменные `NEXT_PUBLIC_*` с контактами, доставкой и услугами на них
-   больше не влияют, но остаются запасными значениями (если база недоступна)
-   и по-прежнему обязательны для production-сборки.
+   (`docs/SITE_SETTINGS.md`). Сохраняет только администратор; сохранение само
+   сбрасывает кэш страниц. После первого сохранения витрина, документы и
+   проверка заказа берут эти значения из базы. Переменные `NEXT_PUBLIC_*` с
+   контактами, доставкой и услугами при этом остаются значениями сборки: их
+   показывают страницы, собранные при сборке образа, до сброса кэша после
+   каждой выкладки (шаг 6), и весь сайт, когда база недоступна. Поэтому в
+   `.env.production` их держат такими же, как в «Настройках»; кроме того, они
+   обязательны для production-сборки.
 
-8. **Проверка фото.** Админка → «Товары» → товар → «Фотографии»: загрузить
+9. **Проверка фото.** Админка → «Товары» → товар → «Фотографии»: загрузить
    JPEG и открыть его на витрине. Если загрузка выключена или отвечает
    ошибкой записи — см. «Фото товаров».
 
-9. **Задания cron** (crontab root на хосте, пути для `/opt/apex`):
+10. **Задания cron** (crontab root на хосте, пути для `/opt/apex`):
 
-   ```cron
-   * * * * * flock -n /run/lock/apex-job-notifications.lock sh /opt/apex/deploy/scripts/run-internal-job.sh notifications
-   * * * * * flock -n /run/lock/apex-job-reservations.lock sh /opt/apex/deploy/scripts/run-internal-job.sh reservations
-   30 2 * * * docker compose --env-file /opt/apex/.env.production -f /opt/apex/deploy/docker-compose.production.yml exec -T postgres sh /scripts/backup-postgres.sh
-   40 2 * * * sh /opt/apex/deploy/scripts/backup-uploads.sh
-   ```
+    ```cron
+    * * * * * flock -n /run/lock/apex-job-notifications.lock sh /opt/apex/deploy/scripts/run-internal-job.sh notifications
+    * * * * * flock -n /run/lock/apex-job-reservations.lock sh /opt/apex/deploy/scripts/run-internal-job.sh reservations
+    30 2 * * * docker compose --env-file /opt/apex/.env.production -f /opt/apex/deploy/docker-compose.production.yml exec -T postgres sh /scripts/backup-postgres.sh
+    40 2 * * * sh /opt/apex/deploy/scripts/backup-uploads.sh
+    @reboot sleep 120 && sh /opt/apex/deploy/scripts/run-internal-job.sh site-revalidation
+    ```
 
-   Подробности — «Фоновые уведомления», «Освобождение резервов»,
-   «Резервные копии».
+    Подробности — «Фоновые уведомления», «Освобождение резервов»,
+    «Резервные копии», «Сброс кэша страниц после запуска».
 
-10. **Проверки:** `https://<домен>/api/health`, каталог, тестовый заказ и
+11. **Проверки:** `https://<домен>/api/health`, каталог, страница
+    `/contacts` (данные из «Настроек»), тестовый заказ и
     `docker compose … logs app | grep '\[config\]'` (пустой вывод — проблем
     нет, см. «Проверка конфигурации при старте»).
 
@@ -133,10 +154,18 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm --no-deps nginx nginx -t
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d app nginx
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml restart nginx
+# 5. Сброс кэша страниц, когда приложение ответило (обязательно)
+until docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T app \
+  node -e 'fetch("http://127.0.0.1:3000/api/health").then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))'
+do sleep 3; done
+sh deploy/scripts/run-internal-job.sh site-revalidation
 ```
 
-После выкладки проверяются `/api/health`, каталог, вход в админку, загрузка
-фото, создание тестового заказа и журналы контейнеров.
+Шаг 5 обязателен при каждом обновлении: без него до 5 минут после старта
+страницы показывают контакты и доставку из сборки и пустой каталог (раздел
+«Сброс кэша страниц после запуска»). После выкладки проверяются
+`/api/health`, каталог, страница `/contacts`, вход в админку, загрузка фото,
+создание тестового заказа и журналы контейнеров.
 
 **Первое обновление до версии с томом фото.** Скрипта `backup-uploads.sh`
 до `git pull` ещё нет — копию фото на этом обновлении пропустить (до него
@@ -160,6 +189,55 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 быть запущен: имя `app` разрешается при проверке). Если проверка не прошла,
 `restart` не выполнять.
 
+## Сброс кэша страниц после запуска
+
+Образ собирается без базы данных. Страницы, которые Next.js строит при сборке
+и затем обновляет раз в 5 минут (ISR: общий макет с шапкой и подвалом,
+главная, каталоги шин и дисков, контакты), поэтому содержат
+значения сборки: контакты, адрес, часы, доставку и услуги из `NEXT_PUBLIC_*`
+в `.env.production` и пустой начальный каталог. Новый контейнер отдаёт их, пока
+страница не перестроится, — до 5 минут после старта, причём первый посетитель
+после этого ещё получает старую версию, пока строится новая. Задание
+`site-revalidation` сбрасывает кэш всех страниц сразу: следующие запросы
+строят их из базы (сохранённые «Настройки», текущий каталог).
+
+Обязательно выполнять после каждого `up -d`, который создаёт контейнер `app`
+заново (первый запуск — шаг 6, каждое обновление — шаг 5): новый контейнер
+начинает со страниц сборки. Каталог `.next` в образе принадлежит пользователю
+приложения (D25), поэтому перестроенные страницы сохраняются в файловой системе
+контейнера: после `docker compose … restart app` и перезагрузки сервера тот же
+контейнер продолжает отдавать уже обновлённые страницы, и сброс там не нужен
+(но и не вредит).
+
+```bash
+# ждать, пока /api/health не ответит 200 (приложение запущено, база доступна)
+until docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T app \
+  node -e 'fetch("http://127.0.0.1:3000/api/health").then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))'
+do sleep 3; done
+sh deploy/scripts/run-internal-job.sh site-revalidation
+```
+
+Скрипт выполняет запрос внутри контейнера `app` с ключом из
+`INTERNAL_JOB_SECRET` (как задания cron) и при успехе ничего не печатает.
+`HTTP 401` — `INTERNAL_JOB_SECRET` не задан или не совпадает; `HTTP 404` — в
+запущенном образе ещё нет этого задания (образ не пересобран). Если цикл
+ожидания не заканчивается за минуту, прервать его (Ctrl+C) и смотреть
+`docker compose … logs app`: чаще всего недоступна база (`/api/health`
+отвечает 503).
+
+Строка cron
+`@reboot sleep 120 && sh /opt/apex/deploy/scripts/run-internal-job.sh site-revalidation`
+(«Первый запуск», шаг 10) — страховка: после перезагрузки сервера она
+обновляет страницы из базы (например, если настройки меняли вручную в SQL).
+120 секунд — запас на старт Docker и приложения; при неудаче cron пришлёт
+ошибку, а страницы обновятся сами по интервалу.
+
+Отсюда правило для `.env.production`: контакты, адрес, часы, доставку и
+услуги в `NEXT_PUBLIC_*` держат такими же, как в «Настройках». Их видно до
+сброса кэша и при недоступной базе, и они обязательны для production-сборки.
+Изменение этих переменных действует только после `build app`, `up -d app` и
+сброса кэша.
+
 ## Команды без pnpm
 
 В образе приложения pnpm нет. `deploy/Dockerfile` включает только shim
@@ -174,11 +252,33 @@ https://registry.npmjs.org/pnpm/…`. Поэтому compose-файл и эта 
 | --- | --- |
 | `pnpm db:migrate` | `node_modules/.bin/tsx server/database/run-migrations.ts` (команда сервиса `migrate`) |
 | `pnpm admin:create -- …` | `node_modules/.bin/tsx server/tools/create-staff.ts …` (через `run --rm migrate`) |
-| `pnpm import:csv …` | `node_modules/.bin/tsx server/imports/run-csv-import.ts …` (через `run --rm app`) |
+| `pnpm import:csv …` | `node_modules/.bin/tsx server/imports/run-csv-import.ts products /tmp/import.csv` (через `run --rm -v <файл>:/tmp/import.csv:ro app`, см. ниже) |
 | `pnpm exec next start` | `node_modules/.bin/next start` (`CMD` образа) |
 
 Сайт тоже запускается без pnpm, поэтому старт контейнера не зависит от
-доступности registry.npmjs.org.
+доступности registry.npmjs.org. Миграциям, созданию сотрудника и запуску
+сайта файлы хоста не нужны; импорту CSV — нужны.
+
+**Импорт CSV из командной строки.** Файлы хоста в контейнер `app` не
+смонтированы, поэтому файл подключают на время команды только для чтения и
+передают путь внутри контейнера:
+
+```bash
+chmod 644 /root/imports/products.csv
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm \
+  -v /root/imports/products.csv:/tmp/import.csv:ro app \
+  node_modules/.bin/tsx server/imports/run-csv-import.ts products /tmp/import.csv
+sh deploy/scripts/run-internal-job.sh catalog-revalidation
+```
+
+Слева от `:` — абсолютный путь к файлу на хосте. Файл должен читаться
+пользователем приложения (uid 10001), отсюда `chmod 644`; права каталогов
+над ним на хосте значения не имеют. Тип — `products` или `fitments`, режим по
+умолчанию `incremental`; `full` — только с четвёртым аргументом
+`--confirm-full` (форматы файлов — `docs/CSV_IMPORTS.md`). Процесс импорта
+работает от роли приложения и кэш страниц сбросить не может — это делает
+задание `catalog-revalidation` (последняя строка). Импорт через админку
+этого не требует.
 
 ## Роли PostgreSQL
 
@@ -266,9 +366,9 @@ POSTGRES_APP_PASSWORD is missing a value`.
 Смена пароля роли приложения: изменить `POSTGRES_APP_PASSWORD`, выполнить
 `up -d postgres`, команду шага 5 и `up -d app`.
 
-CLI-импорт на сервере
-(`docker compose ... run --rm app node_modules/.bin/tsx server/imports/run-csv-import.ts ...`,
-см. «Команды без pnpm») работает от роли приложения: ему нужны только данные.
+CLI-импорт на сервере (`docker compose ... run --rm -v <файл>:/tmp/import.csv:ro app
+node_modules/.bin/tsx server/imports/run-csv-import.ts ...`, полная команда — в
+«Команды без pnpm») работает от роли приложения: ему нужны только данные.
 
 ## Проверка конфигурации при старте
 
@@ -401,7 +501,12 @@ PostgreSQL только для чтения и берёт их из его ок�
 Срок копий базы меняется так же, но в окружении контейнера:
 `… exec -T -e BACKUP_RETENTION_DAYS=30 postgres sh /scripts/backup-postgres.sh`.
 При ошибке скрипты печатают её и завершаются с ненулевым кодом (cron пришлёт
-письмо, если задан `MAILTO`); недописанный архив фото удаляется.
+письмо, если задан `MAILTO`). Оба скрипта пишут сначала во временный файл
+`<имя>.partial` и переименовывают его в `.dump` или `.tar.gz` только после
+успешного завершения; при ошибке и при прерывании (TERM, INT, HUP) временный
+файл удаляется. Поэтому оборванная копия не выглядит как настоящая и не
+вытесняет старые при подсчёте срока хранения; старые копии удаляются только
+после успешной новой.
 
 Архив фото каждый раз полный, а фото уже сжаты, поэтому 14 архивов занимают
 около 14 объёмов тома. Объём тома —
@@ -463,8 +568,9 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
    из раздела «Переход на отдельную роль на работающем сервере».
 6. Применить миграции новее копии:
    `docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate`.
-7. `docker compose … up -d app`, затем `docker compose … restart nginx`;
-   проверить `/api/health`, вход в админку и каталог.
+7. `docker compose … up -d app`, затем `docker compose … restart nginx` и
+   сброс кэша страниц (раздел «Сброс кэша страниц после запуска»); проверить
+   `/api/health`, вход в админку и каталог.
 
 ### Восстановление фото
 
