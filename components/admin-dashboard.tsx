@@ -31,6 +31,7 @@ import {
 import { businessConfig } from "@/config/business";
 import { validateBusinessConfig } from "@/config/business-validation";
 import type { AdminSection } from "@/lib/admin/admin-sections";
+import { applySiteSettingsToConfig, type SiteSettings } from "@/lib/site-settings";
 import type { UserProfile } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 import { FitmentRequests } from "@/components/admin/fitment-requests";
@@ -67,7 +68,21 @@ function Overview({ onNavigate }: { onNavigate: (section: Section) => void }) {
   const [catalogTotal, setCatalogTotal] = useState<number | null>(
     businessConfig.catalog.dataMode === "preview" ? products.length : null,
   );
-  const configurationIssues = validateBusinessConfig(businessConfig);
+  // Contacts and address saved in the admin settings count as filled.
+  const [savedSettings, setSavedSettings] = useState<SiteSettings | null>(null);
+  const configurationIssues = validateBusinessConfig(
+    applySiteSettingsToConfig(businessConfig, savedSettings),
+  );
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    void fetch("/api/admin/settings", {
+      credentials: "same-origin", cache: "no-store", signal: abortController.signal,
+    }).then((response) => response.ok ? response.json() : null)
+      .then((result: { settings?: SiteSettings } | null) => setSavedSettings(result?.settings ?? null))
+      .catch(() => setSavedSettings(null));
+    return () => abortController.abort();
+  }, []);
 
   useEffect(() => {
     if (businessConfig.catalog.dataMode !== "database") return;

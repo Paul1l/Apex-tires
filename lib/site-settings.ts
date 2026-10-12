@@ -82,3 +82,25 @@ export function getManagerNotificationEmail(
 ): string | undefined {
   return settings.contacts.supportEmail ?? settings.contacts.email ?? undefined;
 }
+
+/**
+ * Build-time configuration with the store data replaced by saved settings,
+ * e.g. for the launch checklist (config/business-validation.ts), so contacts
+ * already filled in the admin are not reported as missing. Requisites, brand
+ * and catalog flags stay from the environment.
+ */
+export function applySiteSettingsToConfig(
+  config: BusinessConfig,
+  settings: SiteSettings | null,
+): BusinessConfig {
+  if (!settings) return config;
+  return {
+    ...config,
+    contacts: {
+      ...config.contacts,
+      phone: settings.contacts.phone,
+      email: settings.contacts.email,
+    },
+    location: { ...config.location, address: settings.location.address },
+  };
+}

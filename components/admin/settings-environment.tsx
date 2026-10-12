@@ -5,10 +5,9 @@ import {
   businessConfig,
   getSellerDisplayName,
   type AvailabilityDisplayMode,
-  type BusinessConfig,
 } from "@/config/business";
 import { validateBusinessConfig } from "@/config/business-validation";
-import type { SiteSettings } from "@/lib/site-settings";
+import { applySiteSettingsToConfig, type SiteSettings } from "@/lib/site-settings";
 import styles from "./settings-section.module.css";
 
 const AVAILABILITY_LABELS: Record<AvailabilityDisplayMode, string> = {
@@ -21,24 +20,6 @@ const AVAILABILITY_LABELS: Record<AvailabilityDisplayMode, string> = {
 
 const MISSING = "Не задано";
 
-/**
- * Configuration with the store data replaced by the current settings, so the
- * launch checklist does not report contacts that are already filled in the
- * admin. Requisites, brand and catalog flags stay from the environment.
- */
-function configWithSettings(settings: SiteSettings | null): BusinessConfig {
-  if (!settings) return businessConfig;
-  return {
-    ...businessConfig,
-    contacts: {
-      ...businessConfig.contacts,
-      phone: settings.contacts.phone,
-      email: settings.contacts.email,
-    },
-    location: { ...businessConfig.location, address: settings.location.address },
-  };
-}
-
 function Value({ value }: { value: string | null }) {
   return <dd className={value ? undefined : styles.missing}>{value ?? MISSING}</dd>;
 }
@@ -49,7 +30,7 @@ function Value({ value }: { value: string | null }) {
  * city, site address and catalog modes.
  */
 export function SettingsEnvironment({ settings }: { settings: SiteSettings | null }) {
-  const configurationIssues = validateBusinessConfig(configWithSettings(settings));
+  const configurationIssues = validateBusinessConfig(applySiteSettingsToConfig(businessConfig, settings));
   const yesNo = (value: boolean) => (value ? "Включено" : "Выключено");
 
   return (

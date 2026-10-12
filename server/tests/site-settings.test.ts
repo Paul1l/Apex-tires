@@ -36,3 +36,18 @@ test("a missing or invalid stored row falls back to the defaults", () => {
   assert.deepEqual(parseStoredSiteSettings(undefined, defaults), defaults);
   assert.deepEqual(parseStoredSiteSettings({ contacts: "broken" }, defaults), defaults);
 });
+
+test("saved contacts count as filled in the launch checklist", async () => {
+  const { businessConfig } = await import("../../config/business");
+  const { validateBusinessConfig } = await import("../../config/business-validation");
+  const { applySiteSettingsToConfig } = await import("../../lib/site-settings");
+  const settings = getDefaultSiteSettings();
+  settings.contacts.phone = "+7 (3852) 55-44-33";
+  settings.contacts.email = "shop@example.test";
+  settings.location.address = "Барнаул, ул. Попова, 1";
+  const fields = validateBusinessConfig(applySiteSettingsToConfig(businessConfig, settings)).map((issue) => issue.field);
+  for (const field of ["contacts.phone", "contacts.email", "location.address"]) {
+    assert.equal(fields.includes(field), false, field);
+  }
+  assert.equal(applySiteSettingsToConfig(businessConfig, null), businessConfig);
+});
