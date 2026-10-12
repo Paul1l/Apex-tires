@@ -51,3 +51,59 @@ test("saved contacts count as filled in the launch checklist", async () => {
   }
   assert.equal(applySiteSettingsToConfig(businessConfig, null), businessConfig);
 });
+
+test("control characters in texts are rejected, line breaks are allowed (QA-37)", () => {
+  const paths: string[] = [];
+  for (const mutate of [
+    (input: ReturnType<typeof getDefaultSiteSettings>) => { input.workingHours = "10\u000020"; },
+    (input: ReturnType<typeof getDefaultSiteSettings>) => { input.delivery.pickup.rules = "a\u0007b"; },
+    (input: ReturnType<typeof getDefaultSiteSettings>) => { input.services.other = ["x\u0000"]; },
+    (input: ReturnType<typeof getDefaultSiteSettings>) => { input.location.address = "ул.\u001bПопова"; },
+  ]) {
+    const input = structuredClone(getDefaultSiteSettings());
+    mutate(input);
+    const result = siteSettingsSchema.safeParse(input);
+    assert.equal(result.success, false);
+    if (!result.success) paths.push(result.error.issues[0].path.join("."));
+  }
+  assert.deepEqual(paths, ["workingHours", "delivery.pickup.rules", "services.other.0", "location.address"]);
+  const multiline = structuredClone(getDefaultSiteSettings());
+  multiline.delivery.pickup.rules = "Строка 1\nСтрока 2\tс табуляцией";
+  assert.equal(siteSettingsSchema.safeParse(multiline).success, true);
+});
+
+test("coordinates are saved in pairs only (QA-39)", () => {
+  const input = structuredClone(getDefaultSiteSettings());
+  input.location.latitude = 53.3;
+  input.location.longitude = null;
+  const result = siteSettingsSchema.safeParse(input);
+  assert.equal(result.success, false);
+  if (!result.success) assert.equal(result.error.issues[0].path.join("."), "location.longitude");
+  input.location.longitude = 83.7;
+  assert.equal(siteSettingsSchema.safeParse(input).success, true);
+  input.location.latitude = null;
+  input.location.longitude = null;
+  assert.equal(siteSettingsSchema.safeParse(input).success, true);
+});
+
+test("the build never reads settings from the database (QA-38)", async () => {
+  const environment = process.env as Record<string, string | undefined>;
+  const previous = { phase: environment.NEXT_PHASE, url: environment.DATABASE_URL };
+  environment.NEXT_PHASE = "phase-production-build";
+  environment.DATABASE_URL = "postgres://unused:unused@127.0.0.1:1/unused";
+  const warnings: unknown[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...values: unknown[]) => { warnings.push(values[0]); };
+  try {
+    const { getSiteSettings } = await import("../services/site-settings-service");
+    assert.deepEqual(await getSiteSettings(), getDefaultSiteSettings());
+    // A database attempt would fail on port 1 and log the fallback warning.
+    assert.deepEqual(warnings, []);
+  } finally {
+    console.warn = originalWarn;
+    environment.NEXT_PHASE = previous.phase;
+    environment.DATABASE_URL = previous.url;
+    if (previous.phase === undefined) delete environment.NEXT_PHASE;
+    if (previous.url === undefined) delete environment.DATABASE_URL;
+  }
+});

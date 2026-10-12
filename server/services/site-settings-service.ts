@@ -33,6 +33,9 @@ export { parseStoredSiteSettings, readSiteSettings, type SiteSettingsReader } fr
  * until they are revalidated (saving settings revalidates the whole site).
  */
 export const getSiteSettings = cache(async (): Promise<SiteSettings> => {
+  // `next build` renders pages with the build-time values and never waits for
+  // a database (QA-38); ISR pages pick up saved settings after deployment.
+  if (process.env.NEXT_PHASE === "phase-production-build") return getDefaultSiteSettings();
   if (!databaseIsConfigured()) return getDefaultSiteSettings();
   try {
     return await readSiteSettings(createApplicationServices().pool);

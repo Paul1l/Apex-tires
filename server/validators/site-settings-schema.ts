@@ -5,11 +5,20 @@ import type { SiteSettings } from "../../lib/site-settings";
  * Validation of store data edited in the admin (lib/site-settings.ts).
  * Empty strings become null; links must be https; texts are bounded.
  */
+/**
+ * Control characters other than line breaks and tabs: never part of shop
+ * texts, and NUL is rejected by PostgreSQL JSONB (QA-37).
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+const noControlCharacters = (label: string) =>
+  [(value: string) => !CONTROL_CHARACTERS.test(value), `${label}: недопустимые служебные символы.`] as const;
+
 const optionalText = (maximum: number, label: string) =>
   z
     .string()
     .trim()
     .max(maximum, `${label}: не длиннее ${maximum} символов.`)
+    .refine(...noControlCharacters(label))
     .transform((value) => (value === "" ? null : value))
     .nullable();
 
@@ -31,7 +40,8 @@ const optionalEmail = z
 const httpsUrl = (label: string) =>
   z
     .url({ protocol: /^https$/, error: `${label}: ссылка должна начинаться с https://` })
-    .max(500, `${label}: ссылка не длиннее 500 символов.`);
+    .max(500, `${label}: ссылка не длиннее 500 символов.`)
+    .refine(...noControlCharacters(label));
 
 const optionalHttpsUrl = (label: string) =>
   z
@@ -54,12 +64,23 @@ export const siteSettingsSchema = z.object({
     telegram: optionalHttpsUrl("Telegram"),
     vk: optionalHttpsUrl("ВКонтакте"),
   }),
-  location: z.object({
-    address: optionalText(300, "Адрес"),
-    latitude: z.number().min(-90).max(90).nullable(),
-    longitude: z.number().min(-180).max(180).nullable(),
-    twoGisUrl: httpsUrl("2ГИС"),
-  }),
+  location: z
+    .object({
+      address: optionalText(300, "Адрес"),
+      latitude: z.number().min(-90).max(90).nullable(),
+      longitude: z.number().min(-180).max(180).nullable(),
+      twoGisUrl: httpsUrl("2ГИС"),
+    })
+    .superRefine((location, context) => {
+      // Same rule as the admin form (QA-39): both coordinates or none.
+      if ((location.latitude === null) !== (location.longitude === null)) {
+        context.addIssue({
+          code: "custom",
+          path: [location.latitude === null ? "latitude" : "longitude"],
+          message: "Укажите и широту, и долготу или оставьте обе пустыми.",
+        });
+      }
+    }),
   workingHours: optionalText(200, "Часы работы"),
   delivery: z.object({
     pickup: deliveryOption,
@@ -72,7 +93,14 @@ export const siteSettingsSchema = z.object({
     balancing: z.boolean(),
     installation: z.boolean(),
     other: z
-      .array(z.string().trim().min(1).max(80, "Название услуги не длиннее 80 символов."))
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(80, "Название услуги не длиннее 80 символов.")
+          .refine(...noControlCharacters("Услуга")),
+      )
       .max(10, "Не больше 10 дополнительных услуг."),
   }),
 }) satisfies z.ZodType<SiteSettings, unknown>;
