@@ -92,10 +92,24 @@ FROM node:22-bookworm-slim AS runner
 ENV NODE_ENV=production
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+# pnpm is NOT part of this image: the corepack shim downloads it from
+# registry.npmjs.org on first use, and the `migrate` service runs on the
+# internal `backend` network without internet. Nothing in
+# docker-compose.production.yml calls pnpm: the server is started and the
+# tools are run with the binaries from node_modules/.bin (next, tsx) — the
+# same commands the package.json scripts run (docs/VDS_DEPLOYMENT.md).
 RUN corepack enable && useradd --create-home --uid 10001 apex
 WORKDIR /app
+# Product photos (UPLOADS_DIR=/app/uploads, docs/ADMIN_CATALOG.md): mount
+# point of the `uploads` volume. On the first mount Docker copies this
+# directory, with its owner and mode, into a new empty named volume, so the
+# app user can write there without a chown on the host.
+RUN install -d -o apex -g apex -m 0750 /app/uploads
 COPY --from=dependencies /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
+# Owned by the app user, as in the official Next.js Docker example: ISR
+# writes regenerated pages to .next (otherwise "Failed to update prerender
+# cache" and build-time HTML after every restart).
+COPY --from=builder --chown=apex:apex /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/next.config.ts ./next.config.ts
@@ -105,4 +119,6 @@ COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 USER apex
 EXPOSE 3000
-CMD ["pnpm", "exec", "next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
+# Was `pnpm exec next start`: that downloaded pnpm on every new container and
+# made the start of the site depend on the npm registry.
+CMD ["node_modules/.bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]

@@ -11,6 +11,8 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_file="${backup_directory}/${POSTGRES_DB}_${timestamp}.dump"
 
 mkdir -p "$backup_directory"
+# The dump holds customers' personal data: readable by the owner (root) only.
+umask 077
 export PGPASSWORD="$POSTGRES_PASSWORD"
 pg_dump --host="${POSTGRES_HOST:-postgres}" --username="$POSTGRES_USER" \
   --dbname="$POSTGRES_DB" --format=custom --file="$backup_file"

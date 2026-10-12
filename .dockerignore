@@ -6,6 +6,8 @@ node_modules
 outputs
 work
 *.log
+deploy/backups
+deploy/certbot
 .env*
 !.env.example
 npm-debug.log*

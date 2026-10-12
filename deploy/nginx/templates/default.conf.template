@@ -30,6 +30,31 @@ map "$remote_addr|${ONEC_ALLOWED_IPS}" $apex_onec_ip_denied {
   default 1;
 }
 
+# OPTIONAL, NOT ENABLED: staff allowlist (owner's decision, D21).
+# By default /admin is reachable from any network: staff sign in with a code
+# from an authenticator app, and trusted devices keep a stranger who knows
+# the email from locking them out. To admit /admin, /api/admin/ and
+# /api/auth/staff/ only from the shop's addresses, remove the leading "#"
+# from the code lines here ("#geo", "#map" and the lines up to their "#}")
+# and from the "#if" block in the TLS server below, replace the example
+# addresses, run `nginx -t` and restart nginx (docs/VDS_DEPLOYMENT.md).
+# Other clients get 403 from nginx before the application; the storefront,
+# customer sign-in (/api/auth/ outside /api/auth/staff/), /uploads, 1C and
+# background jobs are not affected. geo accepts exact addresses and CIDR
+# ranges. Never list the Docker network gateway (172.x.0.1): every IPv6
+# client arrives from it (docs/VDS_DEPLOYMENT.md, "IPv6"). Check first that
+# the addresses are static, otherwise staff are locked out until nginx is
+# changed back over SSH.
+#geo $apex_staff_network {
+#  default 0;
+#  203.0.113.10 1;
+#  198.51.100.0/24 1;
+#}
+#map "$apex_staff_network:$uri" $apex_staff_ip_denied {
+#  default 0;
+#  "~*^0:/(?:admin|api/admin|api/auth/staff)(?:/|$)" 1;
+#}
+
 server {
   listen 80;
   server_name ${SITE_HOST};
@@ -67,6 +92,8 @@ server {
   proxy_hide_header X-Content-Type-Options;
   proxy_hide_header Referrer-Policy;
 
+  # Request body limit of every endpoint without its own value below (photo
+  # upload: 8m, imports: 200m).
   client_max_body_size 6m;
 
   # 400, not 404: the request target itself is malformed, and it is the code
@@ -75,6 +102,14 @@ server {
   if ($apex_bad_path_encoding) {
     return 400;
   }
+
+  # Optional staff allowlist, together with the geo/map blocks at the top
+  # (not enabled). At server level it covers every location below, including
+  # /api/admin/imports/ and the photo upload. $uri is the decoded and
+  # normalized path, so /%61dmin or //admin are denied as well.
+  #if ($apex_staff_ip_denied) {
+  #  return 403;
+  #}
 
   # Compression (PERF-06) is done here, not in next start: Accept-Encoding is
   # not passed to the application (see below), so it never compresses and a
@@ -126,6 +161,20 @@ server {
     proxy_pass http://app:3000;
   }
 
+  # Product photo upload, POST /api/admin/products/<id>/images (multipart,
+  # docs/ADMIN_CATALOG.md). The application accepts a body of up to
+  # PRODUCT_IMAGE_MAX_BYTES (default 5 MiB) plus 64 KiB for the form, and
+  # rejects anything larger itself (413 IMAGE_TOO_LARGE, JSON). 8m leaves
+  # about 3 MiB of headroom above the default. If PRODUCT_IMAGE_MAX_BYTES is
+  # raised above 8323072 bytes (~7.9 MiB), set this to at least
+  # PRODUCT_IMAGE_MAX_BYTES + 64 KiB, rounded up to whole megabytes (20m
+  # covers the maximum allowed value, 20000000). Every other endpoint keeps
+  # the 6m of the server level (imports: 200m below).
+  location ~ ^/api/admin/products/[^/]+/images$ {
+    client_max_body_size 8m;
+    proxy_pass http://app:3000;
+  }
+
   location /api/admin/imports/ {
     client_max_body_size 200m;
     proxy_request_buffering off;
@@ -134,6 +183,11 @@ server {
     proxy_pass http://app:3000;
   }
 
+  # Uploaded product photos (/uploads/products/<id>/<file>) also go here, to
+  # the application on purpose: its route serves only the exact file-name
+  # pattern, with a fixed Content-Type, nosniff, a sandbox CSP and immutable
+  # caching. Do not serve the uploads volume from nginx directly without
+  # reproducing all of that.
   location / {
     proxy_pass http://app:3000;
   }

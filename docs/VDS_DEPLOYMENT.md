@@ -9,43 +9,143 @@
 3. Создать `.env.production` вне Git на основе `.env.example`.
 4. Сгенерировать отдельные случайные значения `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`, `OTP_CODE_PEPPER`, `INTERNAL_JOB_SECRET` и `INTEGRATION_API_KEY` длиной не менее 32 символов. Пароли PostgreSQL входят в строку подключения, поэтому в них не должно быть символов, требующих кодирования в URL; подходит `openssl rand -hex 32`.
 5. Открыть только TCP 22, 80 и 443. Порт PostgreSQL 5432 наружу не открывать.
+6. Контакты и реквизиты `NEXT_PUBLIC_*` (телефон, email, адрес магазина,
+   данные продавца) обязательны: без них production-сборка остановится
+   (`assertProductionBusinessConfig`). После запуска данные магазина правятся
+   в админке, а эти значения остаются запасными («Первый запуск», шаг 7).
+7. По желанию: `PRODUCT_IMAGE_MAX_BYTES` и `PRODUCT_IMAGE_MAX_COUNT` (пусто —
+   5 МБ и 10 фото на товар, см. «Фото товаров»). `UPLOADS_DIR` в
+   `.env.production` не задаётся: его фиксирует compose-файл.
 
 ## Первый запуск
 
-```bash
-docker compose --env-file .env.production -f deploy/docker-compose.production.yml build
-docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d postgres
-docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate
-```
+Команды выполняются из корня репозитория на сервере (`/opt/apex`). Порядок
+важен: каждый шаг опирается на предыдущий.
 
-При первом старте с пустым томом PostgreSQL создаёт роль приложения
-(`deploy/postgres/init/10-app-role.sql`, см. «Роли PostgreSQL»). Миграции
-выполняет владелец схемы через одноразовый сервис `migrate`.
+1. **Сборка образа** (`apex-wheels-app:latest`; его же использует сервис
+   `migrate`):
 
-Для первого выпуска сертификата временно смонтировать
-`deploy/nginx/bootstrap-http.conf.template` вместо TLS-шаблона и запустить
-Nginx на порту 80. Выпустить сертификат Let's Encrypt через certbot webroot.
-После появления файлов `/etc/letsencrypt/live/<домен>/fullchain.pem` и
-`privkey.pem` вернуть `deploy/nginx/templates/default.conf.template` и
-запустить весь контур:
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml build
+   ```
 
-```bash
-docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d
-```
+2. **PostgreSQL и роль приложения.** При первом старте с пустым томом образ
+   выполняет `deploy/postgres/init/10-app-role.sql` (см. «Роли PostgreSQL»):
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d postgres
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml logs postgres | grep 'Роль приложения'
+   ```
+
+   Ожидается строка «Роль приложения apex_app готова …».
+
+3. **Миграции 001–013** выполняет владелец схемы через одноразовый сервис
+   `migrate`:
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate
+   ```
+
+   Вывод — строки от `Applied 001_initial_postgresql.sql` до
+   `Applied 013_staff_trusted_devices.sql` (номера 011 нет: миграция не
+   понадобилась). Повторный запуск ничего не применяет и ничего не выводит.
+
+4. **Первый администратор** (открытой регистрации сотрудников нет,
+   `docs/AUTHENTICATION.md`, «Первый администратор»):
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate \
+     node_modules/.bin/tsx server/tools/create-staff.ts --email admin@example.ru --name "Имя Фамилия"
+   ```
+
+   Это `pnpm admin:create` без pnpm (см. «Команды без pnpm»). Команда печатает
+   QR-код и ключ — это секрет входа: сразу отсканируйте QR-код
+   приложением-аутентификатором (Google Authenticator, Яндекс Ключ и др.), не
+   сохраняйте вывод в файлы и чаты и очистите экран (`clear`). Сервис
+   `migrate` берёт из `.env.production` тот же `OTP_CODE_PEPPER`, что и сайт:
+   ключ сотрудника шифруется производным от него ключом, поэтому после
+   запуска `OTP_CODE_PEPPER` не меняют (иначе ключи всех сотрудников придётся
+   выпускать заново).
+
+5. **Сертификат и запуск сайта.** Для первого выпуска сертификата временно
+   смонтировать `deploy/nginx/bootstrap-http.conf.template` вместо
+   TLS-шаблона и запустить Nginx на порту 80. Выпустить сертификат Let's
+   Encrypt через certbot webroot. После появления файлов
+   `/etc/letsencrypt/live/<домен>/fullchain.pem` и `privkey.pem` вернуть
+   `deploy/nginx/templates/default.conf.template` и запустить весь контур:
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d
+   ```
+
+   При первом `up` создаётся том фото `uploads` (см. «Фото товаров»). Входить
+   в админку до перехода на HTTPS не нужно.
+
+6. **Вход в админку.** Открыть `https://<домен>/admin`, ввести email и
+   6-значный код из приложения. Браузер, с которого вошли, становится
+   «доверенным устройством» на 90 дней: чужие неверные попытки с вашим email
+   не закрывают вход с него. Входите с личного устройства. Если телефон с
+   приложением потерян, новый ключ выдаёт другой администратор в разделе
+   «Сотрудники», а для последнего администратора повторяют шаг 4. Менеджеров
+   и других администраторов добавляют в разделе «Сотрудники».
+
+7. **Данные магазина.** Админка → «Настройки» (`/admin?section=settings`):
+   контакты, адрес и карта, часы работы, доставка, услуги
+   (`docs/SITE_SETTINGS.md`). Сохраняет только администратор. После первого
+   сохранения витрина, документы и проверка заказа берут эти значения из
+   базы; переменные `NEXT_PUBLIC_*` с контактами, доставкой и услугами на них
+   больше не влияют, но остаются запасными значениями (если база недоступна)
+   и по-прежнему обязательны для production-сборки.
+
+8. **Проверка фото.** Админка → «Товары» → товар → «Фотографии»: загрузить
+   JPEG и открыть его на витрине. Если загрузка выключена или отвечает
+   ошибкой записи — см. «Фото товаров».
+
+9. **Задания cron** (crontab root на хосте, пути для `/opt/apex`):
+
+   ```cron
+   * * * * * flock -n /run/lock/apex-job-notifications.lock sh /opt/apex/deploy/scripts/run-internal-job.sh notifications
+   * * * * * flock -n /run/lock/apex-job-reservations.lock sh /opt/apex/deploy/scripts/run-internal-job.sh reservations
+   30 2 * * * docker compose --env-file /opt/apex/.env.production -f /opt/apex/deploy/docker-compose.production.yml exec -T postgres sh /scripts/backup-postgres.sh
+   40 2 * * * sh /opt/apex/deploy/scripts/backup-uploads.sh
+   ```
+
+   Подробности — «Фоновые уведомления», «Освобождение резервов»,
+   «Резервные копии».
+
+10. **Проверки:** `https://<домен>/api/health`, каталог, тестовый заказ и
+    `docker compose … logs app | grep '\[config\]'` (пустой вывод — проблем
+    нет, см. «Проверка конфигурации при старте»).
 
 ## Обновление
 
 ```bash
+# 1. Резервные копии базы и фото до изменений
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres sh /scripts/backup-postgres.sh
+sh deploy/scripts/backup-uploads.sh
+# 2. Код и образы
 git pull --ff-only
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml build app
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml pull nginx
+# 3. Новые миграции (уже применённые пропускаются)
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate
+# 4. Проверка шаблона nginx и перезапуск
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm --no-deps nginx nginx -t
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d app nginx
 docker compose --env-file .env.production -f deploy/docker-compose.production.yml restart nginx
 ```
 
-Сначала создаётся резервная копия БД. После выкладки проверяются `/api/health`, каталог, вход, создание тестового заказа и журналы контейнеров.
+После выкладки проверяются `/api/health`, каталог, вход в админку, загрузка
+фото, создание тестового заказа и журналы контейнеров.
+
+**Первое обновление до версии с томом фото.** Скрипта `backup-uploads.sh`
+до `git pull` ещё нет — копию фото на этом обновлении пропустить (до него
+загрузка фото на VDS была выключена, копировать нечего). `up -d app`
+пересоздаёт контейнер с томом `uploads` и `UPLOADS_DIR=/app/uploads`;
+проверить права — раздел «Фото товаров». С этой же версии `migrate` и запуск
+сайта не вызывают pnpm (см. «Команды без pnpm»): команды вида
+`run --rm migrate pnpm …` и `run --rm app pnpm …` в заметках и cron нужно
+заменить, и добавить в cron копию фото (раздел «Резервные копии»).
 
 `migrate` запускает образ, собранный для `app` (`apex-wheels-app:latest`),
 поэтому `build app` выполняется до миграций. Командой `up` сервис не
@@ -59,6 +159,26 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 переменными и сертификатом, не трогая работающий nginx (контейнер `app` должен
 быть запущен: имя `app` разрешается при проверке). Если проверка не прошла,
 `restart` не выполнять.
+
+## Команды без pnpm
+
+В образе приложения pnpm нет. `deploy/Dockerfile` включает только shim
+corepack, который скачивает pnpm из `registry.npmjs.org` при первом вызове, а
+сервис `migrate` работает в сети `backend` без выхода в интернет: `pnpm …`
+там завершается ошибкой `Error when performing the request to
+https://registry.npmjs.org/pnpm/…`. Поэтому compose-файл и эта инструкция
+вызывают те же программы, что скрипты `package.json`, напрямую из
+`node_modules/.bin` образа:
+
+| Скрипт `package.json` | Команда в контейнере |
+| --- | --- |
+| `pnpm db:migrate` | `node_modules/.bin/tsx server/database/run-migrations.ts` (команда сервиса `migrate`) |
+| `pnpm admin:create -- …` | `node_modules/.bin/tsx server/tools/create-staff.ts …` (через `run --rm migrate`) |
+| `pnpm import:csv …` | `node_modules/.bin/tsx server/imports/run-csv-import.ts …` (через `run --rm app`) |
+| `pnpm exec next start` | `node_modules/.bin/next start` (`CMD` образа) |
+
+Сайт тоже запускается без pnpm, поэтому старт контейнера не зависит от
+доступности registry.npmjs.org.
 
 ## Роли PostgreSQL
 
@@ -146,8 +266,9 @@ POSTGRES_APP_PASSWORD is missing a value`.
 Смена пароля роли приложения: изменить `POSTGRES_APP_PASSWORD`, выполнить
 `up -d postgres`, команду шага 5 и `up -d app`.
 
-CLI-импорт на сервере (`docker compose ... run --rm app pnpm import:csv ...`)
-работает от роли приложения: ему нужны только данные.
+CLI-импорт на сервере
+(`docker compose ... run --rm app node_modules/.bin/tsx server/imports/run-csv-import.ts ...`,
+см. «Команды без pnpm») работает от роли приложения: ему нужны только данные.
 
 ## Проверка конфигурации при старте
 
@@ -180,24 +301,187 @@ docker compose --env-file .env.production -f deploy/docker-compose.production.ym
 включается только в `next dev`, поэтому в production-контейнере не запускается
 `workerd`. На Cloudflare значение берётся из vars/secrets worker.
 
+## Фото товаров (том `uploads`)
+
+Фото, загруженные в админке (`docs/ADMIN_CATALOG.md`, «Фото»), хранятся в
+именованном томе `uploads`, смонтированном в контейнер `app` в `/app/uploads`.
+`UPLOADS_DIR=/app/uploads` задаёт сам compose-файл; в `.env.production` эту
+переменную задавать не нужно (значение оттуда не используется). Том
+переживает пересборку образа, `up -d` и перезагрузку сервера. Имя тома в
+Docker — `<проект>_uploads`, по умолчанию `deploy_uploads` (как и
+`deploy_postgres_data`), см. `docker volume ls`.
+
+**Права.** Приложение работает от пользователя `apex` (uid 10001). Каталог
+`/app/uploads` в образе принадлежит ему (режим 0750), и новый пустой том при
+первом подключении получает того же владельца — на хосте ничего делать не
+нужно. Проверка:
+
+```bash
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec app \
+  sh -c 'stat -c "%u %a" /app/uploads && touch /app/uploads/.write-test && rm /app/uploads/.write-test && echo writable'
+```
+
+Ожидается `10001 750` и `writable`. Если владелец другой (том создан раньше
+вручную или другим образом), исправить один раз:
+
+```bash
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm --no-deps --user root app \
+  chown -R 10001:10001 /app/uploads
+```
+
+**Лимиты** — необязательные переменные `.env.production` (после изменения —
+`up -d app`):
+
+| Переменная | Значение |
+| --- | --- |
+| `PRODUCT_IMAGE_MAX_BYTES` | размер одного фото в байтах, 100000–20000000; пусто — 5242880 (5 МБ) |
+| `PRODUCT_IMAGE_MAX_COUNT` | фото у одного товара, 1–30; пусто — 10 |
+
+Неверное значение не останавливает сайт: выключается только загрузка новых
+фото, а админка показывает, какая переменная задана неверно.
+
+Nginx пропускает к загрузке фото (`POST /api/admin/products/<id>/images`)
+тело до 8 МБ (`client_max_body_size 8m` в отдельном `location`), приложение
+принимает фото до `PRODUCT_IMAGE_MAX_BYTES` плюс до 64 КБ на поля формы.
+Значит, `8m` хватает для `PRODUCT_IMAGE_MAX_BYTES` до 8323072 байт (~7,9 МБ).
+Для большего значения в `deploy/nginx/templates/default.conf.template` в этом
+`location` указать не меньше `PRODUCT_IMAGE_MAX_BYTES` + 64 КБ, округлив вверх
+до целых мегабайт (10000000 → `10m`, максимум 20000000 → `20m`), затем
+`nginx -t` и `restart nginx` (раздел «Обновление»). Лимиты остальных адресов
+от этого не меняются (см. «Nginx: правила перед приложением»).
+
+**Раздача.** `/uploads/products/<id>/<файл>` отдаёт приложение через общий
+`location /` nginx: маршрут принимает только имена ровно того вида, который
+создаёт сайт, и отдаёт фиксированный `Content-Type`, `nosniff`, CSP
+`default-src 'none'; sandbox` и кэш на год (`immutable`). Раздавать том
+напрямую из nginx без всех этих ограничений нельзя.
+
+**Осторожно:** `docker compose … down -v` и `docker volume rm` безвозвратно
+удаляют том с фото (и том с базой). Для остановки — `down` без `-v`.
+
 ## Резервные копии
 
-`deploy/scripts/backup-postgres.sh` создаёт custom-format backup для `pg_restore` и удаляет локальные копии старше заданного срока. Скрипт запускается cron ежедневно. Минимум одна дополнительная зашифрованная копия должна уходить на независимое российское object storage. Восстановление необходимо проверять регулярно на отдельной БД.
+| Что | Скрипт | Файл | Хранится |
+| --- | --- | --- | --- |
+| База PostgreSQL | `deploy/scripts/backup-postgres.sh` в контейнере `postgres`: `pg_dump` владельцем схемы, формат custom для `pg_restore` | `deploy/backups/<POSTGRES_DB>_<время UTC>.dump` | 14 дней |
+| Фото товаров (том `uploads`) | `deploy/scripts/backup-uploads.sh` на хосте: `tar` внутри контейнера `app`, архив проверяется `gzip -t` | `deploy/backups/uploads_<время UTC>.tar.gz` | 14 дней |
 
-Пример cron внутри административного контура:
+Скрипты удаляют свои локальные копии старше срока `BACKUP_RETENTION_DAYS`.
+Файлы доступны только root (режим 0600): в дампе персональные данные
+покупателей; поэтому и команды восстановления ниже выполняются от root
+(`sudo -i`), иначе перенаправление `< файл` не прочитает архив. Каталог
+`deploy/backups` исключён из Git (`deploy/.gitignore`).
+Минимум одна дополнительная зашифрованная копия **обоих** наборов должна
+уходить на независимое российское object storage, туда же — зашифрованная
+копия `.env.production`: без того же `OTP_CODE_PEPPER` ключи входа
+сотрудников из восстановленной базы не расшифровать, придётся выпускать
+новые. Восстановление необходимо регулярно проверять (ниже — проверка без
+остановки сайта).
+
+Cron (crontab root, ежедневно; сначала база, затем фото):
 
 ```cron
 30 2 * * * docker compose --env-file /opt/apex/.env.production -f /opt/apex/deploy/docker-compose.production.yml exec -T postgres sh /scripts/backup-postgres.sh
+40 2 * * * sh /opt/apex/deploy/scripts/backup-uploads.sh
 ```
 
-Скрипт уже смонтирован в контейнер PostgreSQL только для чтения. Пароли не указываются прямо в crontab.
-Копию делает владелец схемы (`POSTGRES_USER`). Она содержит права роли
-приложения. При восстановлении в новую базу роль `apex_app` должна уже
-существовать (контейнер с новым томом создаёт её сам), иначе `pg_restore`
-выдаст предупреждения на `GRANT`. После восстановления повторите команду шага 5
-из раздела «Переход на отдельную роль на работающем сервере».
-Скрипт запускается через `sh`: в Git он хранится без права на исполнение, и
-прямой вызов `/scripts/backup-postgres.sh` завершился бы ошибкой `permission denied`.
+Порядок «база, затем фото»: все фото, на которые ссылается дамп, попадают в
+более поздний архив; фото, загруженные между копиями, лежат в архиве лишними
+и не мешают. Скрипты запускаются через `sh`: в Git они хранятся без права на
+исполнение, и прямой вызов завершился бы ошибкой `permission denied`. Пароли
+в crontab не указываются: `backup-postgres.sh` смонтирован в контейнер
+PostgreSQL только для чтения и берёт их из его окружения.
+
+`backup-uploads.sh` работает при запущенном контейнере `app` (`tar` выполняется
+внутри него от пользователя приложения и только читает том), ищет
+`.env.production` в корне репозитория (другой путь — `APEX_ENV_FILE`); каталог
+копий меняется переменной `UPLOADS_BACKUP_DIRECTORY`, срок —
+`BACKUP_RETENTION_DAYS`, например
+`40 2 * * * BACKUP_RETENTION_DAYS=7 sh /opt/apex/deploy/scripts/backup-uploads.sh`.
+Срок копий базы меняется так же, но в окружении контейнера:
+`… exec -T -e BACKUP_RETENTION_DAYS=30 postgres sh /scripts/backup-postgres.sh`.
+При ошибке скрипты печатают её и завершаются с ненулевым кодом (cron пришлёт
+письмо, если задан `MAILTO`); недописанный архив фото удаляется.
+
+Архив фото каждый раз полный, а фото уже сжаты, поэтому 14 архивов занимают
+около 14 объёмов тома. Объём тома —
+`docker compose … exec app du -sh /app/uploads`; при нехватке места на диске
+уменьшить срок хранения архивов фото.
+
+### Проверка восстановления базы (сайт работает)
+
+Копия восстанавливается во временную базу рядом с рабочей, затем она
+удаляется. `<файл>` — имя из `deploy/backups` (в контейнере это `/backups`):
+
+```bash
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+  sh -c 'createdb -U "$POSTGRES_USER" apex_restore_check'
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+  sh -c 'pg_restore -U "$POSTGRES_USER" -d apex_restore_check --no-owner --exit-on-error --single-transaction /backups/<файл>.dump'
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d apex_restore_check -Atc "SELECT (SELECT count(*) FROM schema_migrations), (SELECT count(*) FROM products), (SELECT count(*) FROM orders)"'
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+  sh -c 'dropdb -U "$POSTGRES_USER" apex_restore_check'
+```
+
+`pg_restore` должен завершиться без вывода; числа — применённые миграции
+(12 для 001–013), товары и заказы на момент копии.
+
+### Восстановление базы (замена рабочей)
+
+Выполняется в окно обслуживания, сайт на это время отвечает 502. Те же шаги
+восстанавливают копию на новом сервере (после шагов 1–2 «Первого запуска», с
+прежним `.env.production`).
+
+1. Если рабочая база доступна — сделать копию текущего состояния, чтобы можно
+   было вернуться (команда из cron выше).
+2. Остановить приложение (задания cron в это время завершаются ошибкой — это
+   ожидаемо):
+   `docker compose --env-file .env.production -f deploy/docker-compose.production.yml stop app`.
+3. Пересоздать пустую базу. **Удаляет все текущие данные базы.** На новом
+   сервере шаг тоже нужен: скрипт роли уже создал в новой базе
+   `schema_migrations`, и `pg_restore` остановился бы на ней.
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+     sh -c 'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+   ```
+
+4. Восстановить копию одной транзакцией (при ошибке база остаётся пустой, а
+   не заполненной наполовину):
+
+   ```bash
+   docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T postgres \
+     sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error --single-transaction /backups/<файл>.dump'
+   ```
+
+   Копия содержит права роли приложения, поэтому роль `apex_app` должна уже
+   существовать (её создаёт первый старт PostgreSQL на пустом томе). Если её
+   нет, `pg_restore` остановится на `GRANT`: выполнить команду шага 5 из
+   «Перехода на отдельную роль» и повторить шаги 3–4.
+5. Права роли приложения и закрытый от неё журнал миграций — команда шага 5
+   из раздела «Переход на отдельную роль на работающем сервере».
+6. Применить миграции новее копии:
+   `docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate`.
+7. `docker compose … up -d app`, затем `docker compose … restart nginx`;
+   проверить `/api/health`, вход в админку и каталог.
+
+### Восстановление фото
+
+```bash
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml up -d app
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec -T app \
+  tar -C /app/uploads -xzf - < deploy/backups/uploads_<время>.tar.gz
+docker compose --env-file .env.production -f deploy/docker-compose.production.yml exec app \
+  sh -c 'find /app/uploads -type f | wc -l'
+```
+
+Архив распаковывается от пользователя приложения, файлы получают его
+владельца. Файлы с теми же именами заменяются (имена случайные и не
+повторяются), остальные остаются на месте. Берите архив той же ночи, что и
+дамп базы (он сделан после дампа). Файл без записи в базе на сайте не виден и
+не мешает; запись без файла даёт 404 вместо фото — такое фото загружают
+заново.
 
 ## Фоновые уведомления
 
@@ -388,6 +672,37 @@ ONEC_ALLOWED_IPS=203.0.113.10,203.0.113.11
 пересоздаётся) и пробный обмен с 1С. Адрес, с которого реально приходит 1С,
 виден в `docker compose ... logs nginx`. Символы `"`, `$` и `\` в значении
 ломают конфигурацию: nginx не запустится, проверка `nginx -t` это покажет.
+
+**Размер тела запроса.** Больший запрос nginx отклоняет кодом `413` (с
+заголовками безопасности), не передавая приложению:
+
+| Адрес | `client_max_body_size` |
+| --- | --- |
+| `POST /api/admin/products/<id>/images` — загрузка фото (отдельный `location` с регулярным выражением) | `8m` |
+| `/api/admin/imports/` — импорт CSV (потоковая передача) | `200m` |
+| все остальные адреса | `6m` (уровень `server`) |
+
+Как менять лимит фото вместе с `PRODUCT_IMAGE_MAX_BYTES` — раздел «Фото
+товаров».
+
+**Необязательный allowlist для сотрудников (выключен).** По решению D21
+`/admin` доступен из любой сети: вход — по коду из приложения-аутентификатора,
+а «доверенные устройства» не дают постороннему заблокировать вход сотрудника.
+Если владелец решит пускать в админку только с адресов магазина, в шаблоне
+есть заготовка: блоки `geo` и `map` в начале файла и
+`if ($apex_staff_ip_denied)` в TLS-сервере закомментированы (строки кода
+начинаются с `#` без пробела). Включение: убрать `#` у этих строк, вместо
+примеров `203.0.113.10` и `198.51.100.0/24` указать адреса магазина (здесь
+допустимы и точные адреса, и диапазоны CIDR), затем `nginx -t` и
+`restart nginx`. С других адресов `/admin`, `/api/admin/` (включая импорт и
+загрузку фото) и `/api/auth/staff/` получат `403` от nginx; проверяется
+нормализованный путь, поэтому `/%61dmin` и `//admin` тоже закрыты. Витрина,
+вход покупателей, `/uploads`, 1С и фоновые задания не затрагиваются. Перед
+включением убедиться, что адреса статические, а сотрудникам из других сетей
+есть VPN: иначе вход закроется для всех, и откатывать придётся по SSH. Адрес
+шлюза Docker-сети (`172.x.0.1`) не указывать (см. «IP клиента», IPv6).
+Шаблон хранится в Git: правку лучше внести в репозиторий, иначе локальное
+изменение на сервере может помешать `git pull --ff-only`.
 
 **Версии образов.** `nginx:1.30-alpine` — текущая стабильная ветка (1.30.5 на
 октябрь 2026); прежний `nginx:1.27-alpine` не обновлялся с апреля 2025 года и
