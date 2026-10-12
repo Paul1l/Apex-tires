@@ -132,7 +132,7 @@ test("phones and single-line fields reject tabs, line breaks, VT and FF (QA-41)"
 });
 
 test("C1 controls and Unicode line separators are rejected everywhere (QA-45)", () => {
-  for (const character of ["\u0085", "\u009b", " ", " "]) {
+  for (const character of ["\u0085", "\u009b", "\u2028", "\u2029"]) {
     for (const [path, mutate] of [
       ["location.address", (input: ReturnType<typeof getDefaultSiteSettings>) => { input.location.address = `Барнаул,${character}пр. Ленина, 100`; }],
       ["workingHours", (input: ReturnType<typeof getDefaultSiteSettings>) => { input.workingHours = `Пн–Пт${character}9–19`; }],

@@ -41,3 +41,20 @@ test("the whole-site cache reset job requires the job key", async () => {
   assert.equal(refused.status, 401);
   assert.equal(refused.headers.get("cache-control"), "no-store");
 });
+
+test("every internal job refuses a wrong key without caching (QA-49)", async () => {
+  const environment = process.env as Record<string, string | undefined>;
+  environment.INTERNAL_JOB_SECRET = "j".repeat(48);
+  for (const job of ["notifications", "reservations", "catalog-revalidation", "site-revalidation"]) {
+    const { POST } = await import(`../../app/api/internal/jobs/${job}/route.js`);
+    const response = await POST(
+      new Request(`http://127.0.0.1:3000/api/internal/jobs/${job}`, {
+        method: "POST",
+        headers: { "X-Job-Key": "wrong".repeat(10) },
+      }),
+    );
+    assert.equal(response.status, 401, job);
+    assert.equal(response.headers.get("cache-control"), "no-store", job);
+  }
+});
+

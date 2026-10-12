@@ -9,8 +9,10 @@
 #   <deploy>/backups/uploads_<UTC time>.tar.gz
 # next to the database dumps (that directory is /backups in the postgres
 # container). The archive is written as *.partial first and checked with
-# gzip -t; a failed run leaves no partial file, prints the error and exits
-# non-zero (cron mails it when MAILTO is set). Archives older than
+# gzip -t; a failed or interrupted (TERM/INT/HUP) run leaves no partial file,
+# prints the error and exits non-zero (cron mails it when MAILTO is set). A
+# partial file of a run killed with SIGKILL is removed by the next successful
+# run once it is older than a day. Archives older than
 # BACKUP_RETENTION_DAYS days (default 14, as for the database) are deleted.
 # Restore: docs/VDS_DEPLOYMENT.md, "Резервные копии".
 #

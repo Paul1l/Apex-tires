@@ -7,6 +7,9 @@ import { applicationLogger } from "@/server/types/common";
 import { requestHasValidApiKey } from "@/server/utils/authentication";
 import { ApplicationError, toSafeError } from "@/server/utils/errors";
 
+/** Internal job answers are never cached (QA-49). */
+const NO_STORE = { "Cache-Control": "no-store" };
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -43,20 +46,23 @@ export async function POST(request: Request) {
     }
     const { notificationService } = createApplicationServices();
     if (!notificationService.hasProviders()) {
-      return NextResponse.json({
-        ok: true,
-        sent: 0,
-        failed: 0,
-        providerConfigured: false,
-        queued: await notificationService.countUnsent(),
-        message: PROVIDER_NOT_CONFIGURED_MESSAGE,
-      });
+      return NextResponse.json(
+        {
+          ok: true,
+          sent: 0,
+          failed: 0,
+          providerConfigured: false,
+          queued: await notificationService.countUnsent(),
+          message: PROVIDER_NOT_CONFIGURED_MESSAGE,
+        },
+        { headers: NO_STORE },
+      );
     }
     const result = await notificationService.processPending(20);
-    return NextResponse.json({ ok: result.failed === 0, ...result });
+    return NextResponse.json({ ok: result.failed === 0, ...result }, { headers: NO_STORE });
   } catch (error) {
     applicationLogger.error({ error }, "Notification job failed");
     const safeError = toSafeError(error);
-    return NextResponse.json(safeError.body, { status: safeError.statusCode });
+    return NextResponse.json(safeError.body, { status: safeError.statusCode, headers: NO_STORE });
   }
 }
