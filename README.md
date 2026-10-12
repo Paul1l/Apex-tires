@@ -22,6 +22,24 @@ pnpm dev
 Серверные API запускаются вместе с Next.js. PostgreSQL и интеграционные
 переменные настраиваются по `.env.example`.
 
+### Демо-стенд на Cloudflare
+
+Стенд по ссылке выше — воркер `apex-wheels-store` (OpenNext), подключённый к
+репозиторию через Cloudflare Workers Builds: push в `main` собирает и выкладывает
+стенд, push в другие ветки — превью-версию. Настройки сборки воркера:
+
+| Параметр | Значение |
+|---|---|
+| Build command | `pnpm run build:worker` (не `pnpm run build`: wrangler нужен `.open-next/worker.js`) |
+| Deploy command | `npx wrangler deploy` |
+| Root directory | `/` |
+| Build variables | `NODE_VERSION=22` (pnpm 11 требует Node.js ≥ 22.13); `NEXT_PUBLIC_*` — название и контакты, подставляются при сборке |
+
+Стенд работает в режиме preview без PostgreSQL: каталог, фильтры, подбор и
+корзина — на демонстрационных данных; заказы, вход покупателя, админка и
+загрузка фото требуют базы данных и сервера (`docs/VDS_DEPLOYMENT.md`).
+Ручная выкладка: `pnpm build:worker && npx wrangler deploy`.
+
 ## Статус
 
 Это публичный интерактивный прототип, не готовый принимать реальные заказы.
