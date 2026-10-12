@@ -3,7 +3,9 @@ import {
   createApplicationServices,
   databaseIsConfigured,
 } from "@/server/bootstrap/application-services";
-import { FixedWindowRateLimiter } from "@/server/security/fixed-window-rate-limiter";
+import { readSecurityLimits } from "@/server/config/security-limits";
+import { clientIpRateLimitKey, getClientIp } from "@/server/security/client-ip";
+import { enforceRateLimit } from "@/server/security/rate-limit-policies";
 import { applicationLogger } from "@/server/types/common";
 import { requestHasValidApiKey } from "@/server/utils/authentication";
 import { ApplicationError, toSafeError } from "@/server/utils/errors";
@@ -18,11 +20,10 @@ import {
   stockSchema,
 } from "@/server/validators/one-c-schemas";
 import type { SynchronizationResponse } from "@/server/repositories/integration-sync-log-repository";
+import { revalidateStorefrontCatalog } from "@/server/cache/storefront-revalidation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-const integrationRateLimiter = new FixedWindowRateLimiter(120, 60_000);
 
 interface RouteContext {
   params: Promise<{ action: string[] }>;
@@ -39,7 +40,21 @@ function synchronizationResponse(result: SynchronizationResponse): NextResponse 
   return jsonWithNoStore(result, result.failed > 0 ? 207 : 200);
 }
 
-function validateIntegrationRequest(request: Request) {
+/**
+ * Response for a batch that changes what the catalog pages show (products,
+ * prices, stock). A newly processed batch resets the cached storefront pages;
+ * a repeated idempotencyKey changed nothing. A failed batch is rolled back
+ * and throws before this point.
+ */
+function catalogSynchronizationResponse(
+  entityType: "products" | "prices" | "stocks",
+  result: SynchronizationResponse,
+): NextResponse {
+  if (!result.duplicate) revalidateStorefrontCatalog(`1c-${entityType}`);
+  return synchronizationResponse(result);
+}
+
+async function validateIntegrationRequest(request: Request) {
   if (!databaseIsConfigured()) {
     throw new ApplicationError({
       code: "DATABASE_NOT_CONFIGURED",
@@ -66,18 +81,15 @@ function validateIntegrationRequest(request: Request) {
     });
   }
 
-  const clientAddress =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
-  const rateLimit = integrationRateLimiter.consume(clientAddress);
-  if (!rateLimit.allowed) {
-    throw new ApplicationError({
-      code: "RATE_LIMIT_EXCEEDED",
-      message: `Превышен лимит запросов. Повторите через ${rateLimit.retryAfter} сек.`,
-      statusCode: 429,
-    });
-  }
+  // Shared PostgreSQL limiter (works across processes). The exchange is
+  // key-authenticated and has a single client, so an unknown address falls
+  // back to one common bucket instead of being unlimited.
+  await enforceRateLimit(
+    services.rateLimiter,
+    readSecurityLimits().oneC.perIp,
+    clientIpRateLimitKey(getClientIp(request)) ?? "unknown",
+    { code: "RATE_LIMIT_EXCEEDED", message: "Превышен лимит запросов." },
+  );
 
   return services;
 }
@@ -99,7 +111,7 @@ async function parseBatchEnvelope(request: Request) {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const services = validateIntegrationRequest(request);
+    const services = await validateIntegrationRequest(request);
     const action = (await context.params).action.join("/");
 
     if (action === "health") {
@@ -130,14 +142,15 @@ export async function GET(request: Request, context: RouteContext) {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const services = validateIntegrationRequest(request);
+    const services = await validateIntegrationRequest(request);
     const action = (await context.params).action.join("/");
     const envelope = await parseBatchEnvelope(request);
 
     switch (action) {
       case "products":
       case "products/batch":
-        return synchronizationResponse(
+        return catalogSynchronizationResponse(
+          "products",
           await services.synchronizationService.synchronizeProducts(
             envelope,
             productSchema,
@@ -145,7 +158,8 @@ export async function POST(request: Request, context: RouteContext) {
         );
       case "prices":
       case "prices/batch":
-        return synchronizationResponse(
+        return catalogSynchronizationResponse(
+          "prices",
           await services.synchronizationService.synchronizePrices(
             envelope,
             priceSchema,
@@ -153,7 +167,8 @@ export async function POST(request: Request, context: RouteContext) {
         );
       case "stocks":
       case "stocks/batch":
-        return synchronizationResponse(
+        return catalogSynchronizationResponse(
+          "stocks",
           await services.synchronizationService.synchronizeStocks(
             envelope,
             stockSchema,

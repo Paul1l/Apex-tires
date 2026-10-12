@@ -40,7 +40,7 @@ const availabilityModes: AvailabilityDisplayMode[] = [
 
 export const BUSINESS_DATA_PLACEHOLDER = "[ТРЕБУЕТСЯ ЗАПОЛНИТЬ]";
 export const CONFIRMED_TWO_GIS_URL =
-  "https://2gis.ru/barnaul/firm/70000001036958402/tab/reviews?m=83.75635%2C53.376061%2F16";
+  "https://2gis.ru/barnaul/firm/70000001036958402?m=83.75635%2C53.376061%2F16";
 
 export const businessConfig = {
   deploymentStage: (
@@ -82,6 +82,9 @@ export const businessConfig = {
   },
   location: {
     city: "Барнаул",
+    // Grammatical forms for templates: «в Барнауле», «по Барнаулу».
+    cityPrepositional: "Барнауле",
+    cityDative: "Барнаулу",
     address: optionalValue(process.env.NEXT_PUBLIC_STORE_ADDRESS),
     latitude: coordinate(process.env.NEXT_PUBLIC_STORE_LATITUDE),
     longitude: coordinate(process.env.NEXT_PUBLIC_STORE_LONGITUDE),
@@ -191,7 +194,7 @@ export function normalizeTelephoneHref(phone: string): string {
 }
 
 export function getEnabledDeliveryMethods(
-  config: BusinessConfig = businessConfig,
+  config: { readonly delivery: BusinessConfig["delivery"] } = businessConfig,
 ): Array<"pickup" | "courier" | "transport_company"> {
   const methods: Array<"pickup" | "courier" | "transport_company"> = [];
   if (config.delivery.pickup.enabled) methods.push("pickup");

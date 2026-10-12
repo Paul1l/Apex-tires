@@ -1,19 +1,29 @@
 import type { Pool } from "pg";
-import { businessConfig, getEnabledDeliveryMethods } from "../../config/business";
+import { businessConfig, getEnabledDeliveryMethods, type AvailabilityDisplayMode } from "../../config/business";
+import { getManagerNotificationEmail } from "../../lib/site-settings";
 import type { DeliveryMethod } from "../../lib/types";
 import { withTransaction } from "../database/postgres-client";
 import {
+  InsufficientStockError,
   OrderRepository,
+  type CheckoutProductRow,
   type CreatedOrderRow,
   type NormalizedOrderItem,
   type StockReservation,
 } from "../repositories/order-repository";
 import { ApplicationError } from "../utils/errors";
-import type { CreateOrderInput } from "../validators/order-schemas";
+import { formatProductDisplayName } from "../utils/product-title";
+import { hashCheckoutRequest } from "./checkout-request-hash";
+import { readSiteSettings, type SiteSettingsReader } from "./site-settings-store";
+import {
+  MAXIMUM_ORDER_PRODUCT_QUANTITY,
+  type CreateOrderInput,
+} from "../validators/order-schemas";
 
 type CheckoutOrderRepository = Pick<
   OrderRepository,
   | "findByCheckoutIdempotencyKey"
+  | "countActiveReservationOrdersForContact"
   | "lockProductsForCheckout"
   | "getDeliveryPriceKopecks"
   | "reserveStock"
@@ -31,58 +41,154 @@ export interface CreateOrderContext {
 export interface OrderServiceDependencies {
   pool: Pool;
   orderRepository: CheckoutOrderRepository;
+  /**
+   * Store settings at order time (admin «Настройки»: delivery methods, tire
+   * service, manager notification address). Default: the store_settings row
+   * read with `pool` on every order; build-time defaults without a row.
+   */
+  readSettings?: SiteSettingsReader;
+  /** Fixed values instead of the saved settings (tests, tools). */
   enabledDeliveryMethods?: readonly DeliveryMethod[];
   tireServiceEnabled?: boolean;
   managerNotificationEmail?: string;
+  /** Abuse guard: orders with unexpired stock reservations per phone/email. */
+  maximumActiveReservationsPerContact?: number;
+}
+
+/** What checkout takes from the store settings. */
+interface CheckoutSettings {
+  enabledDeliveryMethods: readonly DeliveryMethod[];
+  tireServiceEnabled: boolean;
+  managerNotificationEmail?: string;
+}
+
+const DEFAULT_MAXIMUM_ACTIVE_RESERVATIONS_PER_CONTACT = 3;
+
+/**
+ * Message for a stock shortage. The exact quantity is shown only when the
+ * owner shows exact stock in the catalog (`exact`); other display modes keep
+ * quantities private. Internal identifiers (SKU, UUID) are never shown.
+ */
+export function formatInsufficientStockMessage(
+  productName: string,
+  availableQuantity: number,
+  displayMode: AvailabilityDisplayMode = businessConfig.catalog.availabilityDisplayMode,
+): string {
+  const available = Math.max(0, Math.floor(availableQuantity));
+  if (available === 0) {
+    return `Товар «${productName}» закончился. Удалите его из корзины.`;
+  }
+  return displayMode === "exact"
+    ? `Товара «${productName}» сейчас в наличии только ${available} шт. Уменьшите количество в корзине.`
+    : `Товара «${productName}» нет в нужном количестве. Уменьшите количество в корзине или свяжитесь с нами.`;
+}
+
+type ExistingCheckoutOrder = CreatedOrderRow & { checkout_request_hash?: string | null };
+
+/**
+ * Result for a repeated idempotency key (SEC-21): the same request gets the
+ * existing order (a retry after a lost response); a different request with
+ * that key is refused. Orders saved before the hash existed (NULL) are
+ * returned as before.
+ */
+function repeatedCheckoutResult(
+  existing: ExistingCheckoutOrder,
+  requestHash: string,
+): CreatedOrderRow & { duplicate: true } {
+  const { checkout_request_hash: storedHash, ...order } = existing;
+  if (storedHash && storedHash !== requestHash) {
+    throw new ApplicationError({
+      code: "IDEMPOTENCY_KEY_REUSED",
+      message:
+        "Этот заказ уже был отправлен с другими данными. Обновите страницу и оформите заказ заново или позвоните менеджеру.",
+      statusCode: 409,
+    });
+  }
+  return { ...order, duplicate: true };
+}
+
+/** 409 with the catalog name (brand, model, size). */
+function createInsufficientStockError(
+  product: CheckoutProductRow,
+  availableQuantity: number,
+): ApplicationError {
+  return new ApplicationError({
+    code: "INSUFFICIENT_STOCK",
+    message: formatInsufficientStockMessage(formatProductDisplayName(product), availableQuantity),
+    statusCode: 409,
+  });
 }
 
 export class OrderService {
   private readonly pool: Pool;
   private readonly orderRepository: CheckoutOrderRepository;
-  private readonly enabledDeliveryMethods: readonly DeliveryMethod[];
-  private readonly tireServiceEnabled: boolean;
-  private readonly managerNotificationEmail?: string;
+  private readonly readSettings: SiteSettingsReader;
+  private readonly fixedSettings: Partial<CheckoutSettings>;
+  private readonly maximumActiveReservationsPerContact: number;
 
   constructor({
     pool,
     orderRepository,
-    enabledDeliveryMethods = getEnabledDeliveryMethods(businessConfig),
-    tireServiceEnabled = businessConfig.services.tireService,
-    managerNotificationEmail =
-      businessConfig.contacts.supportEmail ??
-      businessConfig.contacts.email ??
-      undefined,
+    readSettings = readSiteSettings,
+    enabledDeliveryMethods,
+    tireServiceEnabled,
+    managerNotificationEmail,
+    maximumActiveReservationsPerContact = DEFAULT_MAXIMUM_ACTIVE_RESERVATIONS_PER_CONTACT,
   }: OrderServiceDependencies) {
     this.pool = pool;
     this.orderRepository = orderRepository;
-    this.enabledDeliveryMethods = enabledDeliveryMethods;
-    this.tireServiceEnabled = tireServiceEnabled;
-    this.managerNotificationEmail = managerNotificationEmail;
+    this.readSettings = readSettings;
+    this.fixedSettings = { enabledDeliveryMethods, tireServiceEnabled, managerNotificationEmail };
+    this.maximumActiveReservationsPerContact = maximumActiveReservationsPerContact;
+  }
+
+  /**
+   * Settings for this order: the values saved in the admin at this moment
+   * (one query), unless all of them are fixed by the constructor.
+   */
+  private async loadCheckoutSettings(): Promise<CheckoutSettings> {
+    const fixed = this.fixedSettings;
+    if (
+      fixed.enabledDeliveryMethods !== undefined &&
+      fixed.tireServiceEnabled !== undefined &&
+      fixed.managerNotificationEmail !== undefined
+    ) {
+      return fixed as CheckoutSettings;
+    }
+    const settings = await this.readSettings(this.pool);
+    return {
+      enabledDeliveryMethods: fixed.enabledDeliveryMethods ?? getEnabledDeliveryMethods(settings),
+      tireServiceEnabled: fixed.tireServiceEnabled ?? settings.services.tireService,
+      managerNotificationEmail:
+        fixed.managerNotificationEmail ?? getManagerNotificationEmail(settings),
+    };
   }
 
   async createOrder(
     input: CreateOrderInput,
     context: CreateOrderContext = {},
   ): Promise<CreatedOrderRow & { duplicate?: true }> {
-    if (!this.enabledDeliveryMethods.includes(input.delivery.method)) {
+    const checkoutSettings = await this.loadCheckoutSettings();
+    if (!checkoutSettings.enabledDeliveryMethods.includes(input.delivery.method)) {
       throw new ApplicationError({
         code: "DELIVERY_METHOD_UNAVAILABLE",
         message: "Выбранный способ получения сейчас недоступен.",
         statusCode: 422,
       });
     }
-    if (input.requiresTireService && !this.tireServiceEnabled) {
+    if (input.requiresTireService && !checkoutSettings.tireServiceEnabled) {
       throw new ApplicationError({
         code: "TIRE_SERVICE_UNAVAILABLE",
         message: "Шиномонтаж пока нельзя добавить к заказу.",
         statusCode: 422,
       });
     }
+    const requestHash = hashCheckoutRequest(input);
     const existingOrder = await this.orderRepository.findByCheckoutIdempotencyKey(
       this.pool,
       input.idempotencyKey,
     );
-    if (existingOrder) return { ...existingOrder, duplicate: true };
+    if (existingOrder) return repeatedCheckoutResult(existingOrder, requestHash);
 
     return withTransaction(this.pool, async (database) => {
       await database.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
@@ -94,7 +200,7 @@ export class OrderService {
           input.idempotencyKey,
         );
       if (orderCreatedByConcurrentRequest) {
-        return { ...orderCreatedByConcurrentRequest, duplicate: true };
+        return repeatedCheckoutResult(orderCreatedByConcurrentRequest, requestHash);
       }
 
       const quantityByProductId = new Map<string, number>();
@@ -103,6 +209,32 @@ export class OrderService {
           item.productId,
           (quantityByProductId.get(item.productId) ?? 0) + item.quantity,
         );
+      }
+      for (const quantity of quantityByProductId.values()) {
+        if (quantity > MAXIMUM_ORDER_PRODUCT_QUANTITY) {
+          throw new ApplicationError({
+            code: "VALIDATION_ERROR",
+            message: `Одного товара в заказе может быть не больше ${MAXIMUM_ORDER_PRODUCT_QUANTITY} шт.`,
+            statusCode: 422,
+          });
+        }
+      }
+
+      // Serialized per contact inside the repository, so parallel checkouts
+      // cannot overshoot the limit.
+      const activeReservationOrders =
+        await this.orderRepository.countActiveReservationOrdersForContact(database, {
+          phone: input.customer.phone,
+          email: input.customer.email,
+        });
+      if (activeReservationOrders >= this.maximumActiveReservationsPerContact) {
+        throw new ApplicationError({
+          code: "ACTIVE_RESERVATIONS_LIMIT_EXCEEDED",
+          message:
+            `На этот телефон или email уже оформлено заказов с резервом товара: ${activeReservationOrders}. ` +
+            "Дождитесь звонка менеджера или позвоните нам — новый заказ можно будет оформить после обработки текущих.",
+          statusCode: 429,
+        });
       }
       const requestedItems = Array.from(quantityByProductId, ([productId, quantity]) => ({
         productId,
@@ -127,16 +259,12 @@ export class OrderService {
         if (product.amount_kopecks === null) {
           throw new ApplicationError({
             code: "PRICE_UNAVAILABLE",
-            message: `Для товара ${product.sku} не задана актуальная цена.`,
+            message: `Для товара «${formatProductDisplayName(product)}» сейчас нет актуальной цены. Удалите его из корзины или уточните у менеджера.`,
             statusCode: 409,
           });
         }
         if (Number(product.available) < item.quantity) {
-          throw new ApplicationError({
-            code: "INSUFFICIENT_STOCK",
-            message: `Недостаточный остаток товара ${product.sku}.`,
-            statusCode: 409,
-          });
+          throw createInsufficientStockError(product, Number(product.available));
         }
 
         const unitPriceKopecks = Number(product.amount_kopecks);
@@ -161,21 +289,32 @@ export class OrderService {
 
       const stockReservations: StockReservation[] = [];
       for (const item of normalizedItems) {
-        stockReservations.push(...await this.orderRepository.reserveStock(
-          database,
-          item.productId,
-          item.quantity,
-        ));
+        try {
+          stockReservations.push(...await this.orderRepository.reserveStock(
+            database,
+            item.productId,
+            item.quantity,
+          ));
+        } catch (error) {
+          // Stock changed after the availability check (e.g. a concurrent 1C
+          // update): a 409 for the customer, not a 500.
+          const product = productsById.get(item.productId);
+          if (error instanceof InsufficientStockError && product) {
+            throw createInsufficientStockError(product, error.availableQuantity);
+          }
+          throw error;
+        }
       }
 
       return this.orderRepository.create(database, {
         ...input,
         ...context,
+        checkoutRequestHash: requestHash,
         items: normalizedItems,
         subtotalKopecks,
         deliveryKopecks,
         totalKopecks: subtotalKopecks + deliveryKopecks,
-        managerNotificationEmail: this.managerNotificationEmail,
+        managerNotificationEmail: checkoutSettings.managerNotificationEmail,
         stockReservations,
       });
     });

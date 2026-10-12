@@ -1,22 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FixedWindowRateLimiter } from "../security/fixed-window-rate-limiter.js";
+import { InMemoryRateLimiter } from "../security/fixed-window-rate-limiter.js";
 import { ApplicationError } from "../utils/errors.js";
 import { readJsonRequest } from "../utils/http.js";
 
-test("integration rate limiter rejects requests after the configured limit", () => {
-  const limiter = new FixedWindowRateLimiter(2, 60_000);
+test("integration rate limiter rejects requests after the configured limit", async () => {
+  let now = 1_000;
+  const limiter = new InMemoryRateLimiter({ now: () => now });
 
-  assert.equal(limiter.consume("client", 1_000).allowed, true);
-  assert.equal(limiter.consume("client", 2_000).allowed, true);
-  const rejected = limiter.consume("client", 3_000);
+  assert.equal((await limiter.consume("client", 2, 60)).allowed, true);
+  now = 2_000;
+  assert.equal((await limiter.consume("client", 2, 60)).allowed, true);
+  now = 3_000;
+  const rejected = await limiter.consume("client", 2, 60);
   assert.equal(rejected.allowed, false);
-  assert.equal(rejected.retryAfter, 58);
+  assert.equal(rejected.retryAfterSeconds, 58);
 });
 
 test("JSON request reader reports malformed input safely", async () => {
   const request = new Request("https://example.test/api", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: "not-json",
   });
 
@@ -30,6 +34,7 @@ test("JSON request reader reports malformed input safely", async () => {
 test("JSON request reader enforces the body size limit", async () => {
   const request = new Request("https://example.test/api", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: "too long" }),
   });
 

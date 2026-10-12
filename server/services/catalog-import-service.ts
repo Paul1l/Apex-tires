@@ -1,9 +1,13 @@
 import type { Pool } from "pg";
 import { withTransaction } from "../database/postgres-client";
+import {
+  retryWhileDatabaseUnavailable,
+  type DatabaseRetryOptions,
+} from "../database/database-retry";
 import { parseCsvStream, type CsvRecord } from "../imports/csv-parser";
 import { ProductRepository } from "../repositories/product-repository";
 import { AdminAuditRepository } from "../repositories/admin-audit-repository";
-import { applicationLogger, type JsonValue } from "../types/common";
+import { applicationLogger, type DatabaseExecutor, type JsonValue } from "../types/common";
 import { ImportJobRepository } from "../repositories/import-job-repository";
 import { FitmentRepository } from "../repositories/fitment-repository";
 import { normalizedFitmentImportSchema } from "../validators/fitment-import-schema";
@@ -16,6 +20,44 @@ import {
   type ProductSyncItem,
   type StockSyncItem,
 } from "../validators/one-c-schemas";
+
+/** An import without a committed batch for this long is considered dead. */
+export const DEFAULT_STALE_IMPORT_MINUTES = 30;
+
+/** IMPORT_JOB_STALE_MINUTES: 1–1440, otherwise the default (30). */
+export function readStaleImportMinutes(value = process.env.IMPORT_JOB_STALE_MINUTES): number {
+  const minutes = Number(value);
+  return Number.isInteger(minutes) && minutes >= 1 && minutes <= 1_440
+    ? minutes
+    : DEFAULT_STALE_IMPORT_MINUTES;
+}
+
+export function staleImportReason(minutes: number): string {
+  return `Импорт прерван: нет признаков работы ${minutes} мин.`;
+}
+
+/**
+ * Marks dead imports (queued/processing without progress for the threshold)
+ * as failed. Called before an import starts and before the admin reads the
+ * job list, so a job whose final status was lost never stays "processing".
+ */
+export async function failStaleImportJobs(
+  database: DatabaseExecutor,
+  repository = new ImportJobRepository(),
+  staleMinutes = readStaleImportMinutes(),
+): Promise<string[]> {
+  const ids = await repository.failStale(database, staleMinutes, staleImportReason(staleMinutes));
+  if (ids.length > 0) {
+    applicationLogger.warn({ jobIds: ids.join(","), staleMinutes }, "Stale CSV import jobs marked failed");
+  }
+  return ids;
+}
+
+export interface CatalogImportServiceOptions {
+  /** Retries of the final "failed" status while PostgreSQL is unavailable. */
+  statusRetry?: DatabaseRetryOptions;
+  staleImportMinutes?: number;
+}
 
 const CSV_SOURCE_SYSTEM = "csv";
 const MAXIMUM_STREAM_IMPORT_ROWS = 300_000;
@@ -81,19 +123,59 @@ export class CatalogImportService {
     private readonly auditRepository: AdminAuditRepository,
     private readonly importJobRepository = new ImportJobRepository(),
     private readonly fitmentRepository = new FitmentRepository(),
+    private readonly options: CatalogImportServiceOptions = {},
   ) {}
+
+  /** Creates and starts a job record after closing dead jobs of earlier runs. */
+  private async startJob(type: "products_csv" | "fitments_csv", filename: string, actorUserId?: string) {
+    await failStaleImportJobs(
+      this.pool,
+      this.importJobRepository,
+      this.options.staleImportMinutes ?? readStaleImportMinutes(),
+    );
+    const jobId = await this.importJobRepository.create(this.pool, { type, filename, createdBy: actorUserId });
+    await this.importJobRepository.start(this.pool, jobId);
+    return jobId;
+  }
+
+  /**
+   * Records an interrupted import. The usual reason is an unavailable
+   * database (restart, network), so the write is retried with growing pauses
+   * for up to ~45 s (see retryWhileDatabaseUnavailable); a CLI waits that
+   * long at most. If the status still cannot be saved, that is logged, the
+   * original error goes to the caller, and the job is closed later as stale
+   * (failStaleImportJobs).
+   */
+  private async markJobFailed(jobId: string, error: unknown): Promise<void> {
+    try {
+      await retryWhileDatabaseUnavailable(
+        () =>
+          this.importJobRepository.finish(
+            this.pool,
+            jobId,
+            "failed",
+            error instanceof Error ? error.message.slice(0, 500) : "Импорт прерван.",
+          ),
+        {
+          onRetry: (retryError, attempt, delay) =>
+            applicationLogger.warn(
+              { error: retryError, jobId, attempt, retryInSeconds: delay / 1_000 },
+              "Import job status not saved yet: database unavailable, retrying",
+            ),
+          ...this.options.statusRetry,
+        },
+      );
+    } catch (finishError) {
+      applicationLogger.error({ error: finishError, jobId }, "Import job status was not saved");
+    }
+  }
 
   async importFitmentsCsvStream(
     stream: ReadableStream<Uint8Array>,
     filename: string,
     actorUserId?: string,
   ): Promise<ImportReport> {
-    const jobId = await this.importJobRepository.create(this.pool, {
-      type: "fitments_csv",
-      filename,
-      createdBy: actorUserId,
-    });
-    await this.importJobRepository.start(this.pool, jobId);
+    const jobId = await this.startJob("fitments_csv", filename, actorUserId);
     const batchSize = Math.min(2_000, Math.max(100, Number(process.env.FITMENT_IMPORT_BATCH_SIZE) || DEFAULT_IMPORT_BATCH_SIZE));
     const responseErrors: ImportRowError[] = [];
     let batch: CsvRecord[] = [];
@@ -198,7 +280,7 @@ export class CatalogImportService {
       }
       return report;
     } catch (error) {
-      await this.importJobRepository.finish(this.pool, jobId, "failed", error instanceof Error ? error.message.slice(0, 500) : "Импорт прерван.");
+      await this.markJobFailed(jobId, error);
       throw error;
     }
   }
@@ -209,12 +291,7 @@ export class CatalogImportService {
     mode: "full" | "incremental" = "incremental",
     actorUserId?: string,
   ): Promise<ImportReport> {
-    const jobId = await this.importJobRepository.create(this.pool, {
-      type: "products_csv",
-      filename,
-      createdBy: actorUserId,
-    });
-    await this.importJobRepository.start(this.pool, jobId);
+    const jobId = await this.startJob("products_csv", filename, actorUserId);
     const batchSize = Math.min(
       2_000,
       Math.max(100, Number(process.env.CATALOG_IMPORT_BATCH_SIZE) || DEFAULT_IMPORT_BATCH_SIZE),
@@ -327,12 +404,7 @@ export class CatalogImportService {
       }
       return report;
     } catch (error) {
-      await this.importJobRepository.finish(
-        this.pool,
-        jobId,
-        "failed",
-        error instanceof Error ? error.message.slice(0, 500) : "Импорт прерван.",
-      );
+      await this.markJobFailed(jobId, error);
       throw error;
     }
   }

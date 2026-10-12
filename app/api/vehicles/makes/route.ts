@@ -1,56 +1,26 @@
 import { NextResponse } from "next/server";
-import {
-  formatVehicleMakeName,
-  getSupplementalVehicleMakes,
-  normalizeVehicleMakeName,
-  sortVehicleMakes,
-  type VehicleMake,
-} from "@/lib/vehicle-catalog";
+import { applicationLogger } from "@/server/types/common";
+import { normalizeVehicleMakeName, sortVehicleMakes } from "@/lib/vehicle-catalog";
 import { businessConfig } from "@/config/business";
 import {
   createApplicationServices,
   databaseIsConfigured,
 } from "@/server/bootstrap/application-services";
+import {
+  VEHICLE_CACHE_CONTROL,
+  getVehicleReferenceService,
+  vehicleReferenceCacheControl,
+} from "@/server/services/vehicle-reference-service";
 
 export const dynamic = "force-dynamic";
-
-const VPIC_API_ORIGIN = "https://vpic.nhtsa.dot.gov/api/vehicles";
-const PASSENGER_VEHICLE_TYPES = [
-  "Passenger%20Car",
-  "Multipurpose%20Passenger%20Vehicle%20(MPV)",
-  "Truck",
-];
-
-interface VpicMake {
-  MakeId: number;
-  MakeName: string;
-}
-
-interface VpicResponse {
-  Results?: VpicMake[];
-}
-
-async function fetchMakesForVehicleType(
-  encodedVehicleType: string,
-): Promise<VpicMake[]> {
-  const response = await fetch(
-    `${VPIC_API_ORIGIN}/GetMakesForVehicleType/${encodedVehicleType}?format=json`,
-    {
-      headers: { Accept: "application/json" },
-      next: { revalidate: 86_400 },
-      signal: AbortSignal.timeout(8_000),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`vPIC makes request returned HTTP ${response.status}`);
-  }
-  const payload = (await response.json()) as VpicResponse;
-  return payload.Results ?? [];
-}
+export const runtime = "nodejs";
 
 /**
- * Returns passenger-car, MPV and light-truck makes from the official vPIC
- * catalog, supplemented with brands relevant to the Russian market.
+ * Vehicle makes. Database catalog: makes with verified fitments. Preview:
+ * passenger-car, MPV and light-truck makes from the official vPIC catalog
+ * merged with brands relevant to the Russian market, served from the server
+ * cache (see server/services/vehicle-reference-service.ts); `source` is
+ * "regional-fallback" when vPIC is unavailable.
  */
 export async function GET() {
   if (businessConfig.catalog.dataMode === "database") {
@@ -61,7 +31,7 @@ export async function GET() {
           code: "FITMENT_STORAGE_NOT_CONFIGURED",
           message: "База применяемости пока не подключена.",
         },
-        { status: 503, headers: { "Cache-Control": "no-store" } },
+        { status: 503, headers: { "Cache-Control": VEHICLE_CACHE_CONTROL.error } },
       );
     }
     try {
@@ -74,65 +44,29 @@ export async function GET() {
             makes.map((name) => ({ id: normalizeVehicleMakeName(name), name })),
           ),
         },
-        { headers: { "Cache-Control": "public, s-maxage=300" } },
+        { headers: { "Cache-Control": VEHICLE_CACHE_CONTROL.database } },
       );
     } catch (error) {
-      console.error("PostgreSQL vehicle makes request failed", error);
+      applicationLogger.error({ error }, "PostgreSQL vehicle makes request failed");
       return NextResponse.json(
         {
           ok: false,
           code: "FITMENT_STORAGE_UNAVAILABLE",
           message: "Справочник автомобилей временно недоступен.",
         },
-        { status: 503, headers: { "Cache-Control": "no-store" } },
+        { status: 503, headers: { "Cache-Control": VEHICLE_CACHE_CONTROL.error } },
       );
     }
   }
-  const supplementalMakes = getSupplementalVehicleMakes();
 
-  try {
-    const remoteGroups = await Promise.all(
-      PASSENGER_VEHICLE_TYPES.map(fetchMakesForVehicleType),
-    );
-    const uniqueMakes = new Map<string, VehicleMake>();
-
-    for (const make of supplementalMakes) {
-      uniqueMakes.set(normalizeVehicleMakeName(make.name), make);
-    }
-    for (const remoteMake of remoteGroups.flat()) {
-      const normalizedName = normalizeVehicleMakeName(remoteMake.MakeName);
-      uniqueMakes.set(normalizedName, {
-        id: String(remoteMake.MakeId),
-        name: formatVehicleMakeName(remoteMake.MakeName),
-      });
-    }
-
-    return NextResponse.json(
-      {
-        ok: true,
-        source: "vpic+regional",
-        items: sortVehicleMakes(Array.from(uniqueMakes.values())),
+  const result = await getVehicleReferenceService(applicationLogger).getMakes();
+  return NextResponse.json(
+    { ok: true, source: result.source, items: result.items },
+    {
+      headers: {
+        "Cache-Control": vehicleReferenceCacheControl("makes", result),
+        "X-Vehicle-Cache": result.cache,
       },
-      {
-        headers: {
-          "Cache-Control":
-            "public, s-maxage=86400, stale-while-revalidate=604800",
-        },
-      },
-    );
-  } catch (error) {
-    console.error("Vehicle makes catalog request failed", error);
-    return NextResponse.json(
-      {
-        ok: true,
-        source: "regional-fallback",
-        items: sortVehicleMakes(supplementalMakes),
-      },
-      {
-        headers: {
-          "Cache-Control": "public, s-maxage=900, stale-while-revalidate=86400",
-        },
-      },
-    );
-  }
+    },
+  );
 }

@@ -9,6 +9,7 @@ import type { CatalogQuery } from "../validators/catalog-query-schema";
 import { createProductSlug } from "../utils/product-slug";
 import { createHash } from "node:crypto";
 import { ApplicationError } from "../utils/errors";
+import { toSafeImageUrl } from "../validators/image-url";
 
 export interface CatalogProductRow {
   id: string;
@@ -52,6 +53,44 @@ export interface CatalogFacetRow {
   widths: number[];
   profiles: number[];
   diameters: number[];
+}
+
+// Static SQL (no user input) mirroring isSafeImageUrl, so the first *safe*
+// image is selected even if older rows contain javascript:/data:/http: URLs.
+// Rows are additionally passed through toSafeImageUrl after the query.
+// Also used by the admin catalog list (admin-catalog-product-repository.ts).
+export const SAFE_IMAGE_URL_SQL = `(
+  (LOWER(LEFT(product_images.url, 8)) = 'https://'
+    OR (LEFT(product_images.url, 1) = '/' AND LEFT(product_images.url, 2) <> '//'))
+  AND product_images.url !~ '[[:cntrl:]]'
+  AND STRPOS(product_images.url, CHR(92)) = 0
+  AND product_images.url = BTRIM(product_images.url)
+)`;
+
+/**
+ * A verified fitment row (table fitments) applies to a product when the
+ * product's typed specs match the vehicle's size. Static SQL that expects the
+ * aliases products, tire_specs, wheel_specs and fitments. Shared by the
+ * storefront vehicle filter and the admin fitment editor.
+ */
+export const FITMENT_MATCHES_PRODUCT_SQL = `(
+          (products.kind = 'tire' AND fitments.product_type = 'tire'
+            AND tire_specs.width = fitments.tire_width
+            AND tire_specs.profile = fitments.tire_profile
+            AND tire_specs.diameter = fitments.tire_diameter)
+          OR
+          (products.kind = 'wheel' AND fitments.product_type = 'wheel'
+            AND wheel_specs.diameter = fitments.wheel_diameter
+            AND wheel_specs.width = fitments.wheel_width
+            AND wheel_specs.bolt_count = fitments.bolt_count
+            AND wheel_specs.pcd = fitments.pcd
+            AND (fitments.dia IS NULL OR wheel_specs.dia >= fitments.dia)
+            AND (fitments.et_min IS NULL OR wheel_specs.et >= fitments.et_min)
+            AND (fitments.et_max IS NULL OR wheel_specs.et <= fitments.et_max))
+        )`;
+
+function withSafeImage(row: CatalogProductRow): CatalogProductRow {
+  return { ...row, image: toSafeImageUrl(row.image) };
 }
 
 interface SqlFilter {
@@ -129,21 +168,7 @@ function createCatalogFilter(query: CatalogQuery): SqlFilter {
         AND LOWER(car_models.name) = LOWER($${modelParameter})
         AND LOWER(car_generations.name) = LOWER($${generationParameter})
         ${modificationClause}
-        AND (
-          (products.kind = 'tire' AND fitments.product_type = 'tire'
-            AND tire_specs.width = fitments.tire_width
-            AND tire_specs.profile = fitments.tire_profile
-            AND tire_specs.diameter = fitments.tire_diameter)
-          OR
-          (products.kind = 'wheel' AND fitments.product_type = 'wheel'
-            AND wheel_specs.diameter = fitments.wheel_diameter
-            AND wheel_specs.width = fitments.wheel_width
-            AND wheel_specs.bolt_count = fitments.bolt_count
-            AND wheel_specs.pcd = fitments.pcd
-            AND (fitments.dia IS NULL OR wheel_specs.dia >= fitments.dia)
-            AND (fitments.et_min IS NULL OR wheel_specs.et >= fitments.et_min)
-            AND (fitments.et_max IS NULL OR wheel_specs.et <= fitments.et_max))
-        )
+        AND ${FITMENT_MATCHES_PRODUCT_SQL}
     )`);
   }
   return { sql: clauses.join("\n AND "), values };
@@ -213,12 +238,13 @@ export class ProductRepository {
        LEFT JOIN LATERAL (
          SELECT product_images.url FROM product_images
          WHERE product_images.product_id = products.id
+           AND ${SAFE_IMAGE_URL_SQL}
          ORDER BY product_images.position, product_images.id LIMIT 1
        ) image ON TRUE
        ORDER BY ${catalogSort(query.sort)}`,
       [...filter.values, query.pageSize, (query.page - 1) * query.pageSize],
     );
-    return result.rows;
+    return result.rows.map(withSafeImage);
   }
 
   async getCatalogFacets(
@@ -276,12 +302,14 @@ export class ProductRepository {
          WHERE inventories.product_id=products.id AND warehouses.is_active
        ) inventory ON TRUE
        LEFT JOIN LATERAL (
-         SELECT url FROM product_images WHERE product_id=products.id ORDER BY position,id LIMIT 1
+         SELECT product_images.url FROM product_images
+         WHERE product_images.product_id=products.id AND ${SAFE_IMAGE_URL_SQL}
+         ORDER BY product_images.position, product_images.id LIMIT 1
        ) image ON TRUE
        WHERE ${predicate} AND products.is_active=TRUE LIMIT 100`,
       values,
     );
-    return result.rows;
+    return result.rows.map(withSafeImage);
   }
 
   async findExistingExternalIds(

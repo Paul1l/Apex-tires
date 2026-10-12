@@ -48,6 +48,14 @@ export class NotificationOutboxRepository {
     return result.rows[0] ?? null;
   }
 
+  /** Notifications not delivered yet (pending, waiting for a retry or in progress). */
+  async countUnsent(database: DatabaseExecutor): Promise<number> {
+    const result = await database.query<{ count: number }>(
+      "SELECT COUNT(*)::integer AS count FROM notification_outbox WHERE status <> 'sent'",
+    );
+    return result.rows[0]?.count ?? 0;
+  }
+
   async markSent(database: DatabaseExecutor, id: string): Promise<void> {
     await database.query(
       `UPDATE notification_outbox

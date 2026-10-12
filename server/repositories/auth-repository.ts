@@ -1,3 +1,4 @@
+import type { SessionAuthMethod } from "../../lib/auth/session";
 import type { DatabaseExecutor } from "../types/common";
 
 export type UserRole = "customer" | "manager" | "admin";
@@ -25,6 +26,8 @@ export interface AuthenticatedUserRow {
 export interface SessionUserRow extends AuthenticatedUserRow {
   session_id: string;
   expires_at: Date | string;
+  /** How the session was opened; staff roles act only through `staff_totp`. */
+  auth_method: SessionAuthMethod;
 }
 
 export class AuthRepository {
@@ -57,6 +60,40 @@ export class AuthRepository {
       [digest, startedAt],
     );
     return Number(result.rows[0]?.count ?? 0);
+  }
+
+  /**
+   * Challenges of one destination with failed code attempts since `startedAt`
+   * (oldest first). Used for the per-address lockout across challenges.
+   */
+  async listFailedAttemptsSince(
+    database: DatabaseExecutor,
+    destinationHash: string,
+    startedAt: Date,
+  ): Promise<Array<{ created_at: Date | string; attempts: number }>> {
+    const result = await database.query<{ created_at: Date | string; attempts: number }>(
+      `SELECT created_at, attempts
+       FROM otp_challenges
+       WHERE destination_hash = $1 AND created_at >= $2 AND attempts > 0
+       ORDER BY created_at ASC`,
+      [destinationHash, startedAt],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Serializes code verification for one destination until the transaction
+   * ends, so parallel guesses against several challenges cannot overshoot the
+   * per-address failure limit.
+   */
+  async lockDestinationForVerification(
+    database: DatabaseExecutor,
+    destinationHash: string,
+  ): Promise<void> {
+    await database.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`otp-destination:${destinationHash}`],
+    );
   }
 
   async createChallenge(
@@ -187,12 +224,20 @@ export class AuthRepository {
       userId: string;
       tokenHash: string;
       expiresAt: Date;
+      /** Defaults to the customer email-code sign-in. */
+      authMethod?: SessionAuthMethod;
     },
   ): Promise<void> {
     await database.query(
-      `INSERT INTO sessions (id, user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3, $4)`,
-      [session.id, session.userId, session.tokenHash, session.expiresAt],
+      `INSERT INTO sessions (id, user_id, token_hash, expires_at, auth_method)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        session.id,
+        session.userId,
+        session.tokenHash,
+        session.expiresAt,
+        session.authMethod ?? "customer_otp",
+      ],
     );
   }
 
@@ -202,6 +247,7 @@ export class AuthRepository {
   ): Promise<SessionUserRow | null> {
     const result = await database.query<SessionUserRow>(
       `SELECT sessions.id AS session_id, sessions.expires_at,
+              sessions.auth_method,
               users.id, users.email, users.phone, users.name,
               users.role, users.status
        FROM sessions

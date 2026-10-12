@@ -10,6 +10,7 @@ import {
   OrderService,
   type OrderServiceDependencies,
 } from "../services/order-service.js";
+import { getDefaultSiteSettings } from "../../lib/site-settings.js";
 
 function createTransactionPool() {
   const database = {
@@ -17,6 +18,9 @@ function createTransactionPool() {
       return { rows: [] };
     },
     release() {},
+    // EventEmitter methods of a pg PoolClient (withTransaction listens for "error").
+    on() {},
+    removeListener() {},
   };
   return {
     database,
@@ -34,12 +38,22 @@ test("order total is calculated from locked backend prices", async () => {
     async findByCheckoutIdempotencyKey() {
       return null;
     },
+    async countActiveReservationOrdersForContact() {
+      return 0;
+    },
     async lockProductsForCheckout() {
       return [
         {
           id: "d5d4657d-9992-4b87-8b58-36af33ef5144",
           sku: "TYRE-001",
           name: "Test tyre",
+          kind: "tire" as const,
+          brand: "Ikon",
+          model: "Autograph Aqua 3",
+          width: 205,
+          profile: 55,
+          diameter: 16,
+          pcd: null,
           is_active: true,
           amount_kopecks: 12_345,
           available: 8,
@@ -82,6 +96,7 @@ test("order total is calculated from locked backend prices", async () => {
     pool: pool as unknown as Pool,
     orderRepository,
     enabledDeliveryMethods: ["pickup"],
+    readSettings: async () => getDefaultSiteSettings(),
   });
 
   const order = await service.createOrder({

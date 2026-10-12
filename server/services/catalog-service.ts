@@ -1,24 +1,14 @@
 import type { Pool } from "pg";
+import { businessConfig, type AvailabilityDisplayMode } from "../../config/business";
 import type { Product, ProductDetails } from "../../lib/types";
 import { ProductRepository, type CatalogProductRow } from "../repositories/product-repository";
 import type { CatalogQuery } from "../validators/catalog-query-schema";
 import { normalizeCatalogSearch } from "./catalog-search-parser";
+import { buildProductSubtitle } from "../utils/product-title";
+import { toPublicProduct } from "./public-product";
 
 function kopecksToRubles(value: number | string): number {
   return Number(value) / 100;
-}
-
-function buildProductSubtitle(row: {
-  kind: "tire" | "wheel";
-  width: number;
-  profile: number;
-  diameter: number;
-  pcd: string | null;
-}): string {
-  if (row.kind === "tire") {
-    return `${row.width}/${row.profile} R${row.diameter}`;
-  }
-  return [`R${row.diameter}`, row.pcd].filter(Boolean).join(" ");
 }
 
 function mapCatalogProduct(row: CatalogProductRow): Product {
@@ -59,18 +49,26 @@ function mapCatalogProduct(row: CatalogProductRow): Product {
   };
 }
 
+/**
+ * Catalog reads. Every method except getAdminCatalogPage serves buyers
+ * (public API, server-rendered storefront and product pages, cart): products
+ * are passed through toPublicProduct, so the 1C identifier and exact stock are
+ * not exposed beyond what the availability display mode shows.
+ */
 export class CatalogService {
   constructor(
     private readonly pool: Pool,
     private readonly productRepository: ProductRepository,
+    private readonly availabilityDisplayMode: AvailabilityDisplayMode =
+      businessConfig.catalog.availabilityDisplayMode,
   ) {}
 
-  async getCatalogPage(query: CatalogQuery) {
+  private async loadCatalogPage(query: CatalogQuery, toResponseProduct: (product: Product) => Product) {
     const [rows, facets] = await Promise.all([
       this.productRepository.searchCatalog(this.pool, normalizeCatalogSearch(query)),
       this.productRepository.getCatalogFacets(this.pool, query.type),
     ]);
-    const items = rows.map(mapCatalogProduct);
+    const items = rows.map((row) => toResponseProduct(mapCatalogProduct(row)));
     const total = Number(rows[0]?.total_count ?? 0);
     return {
       items,
@@ -85,17 +83,35 @@ export class CatalogService {
     };
   }
 
+  private toPublic<ProductType extends Product>(product: ProductType): ProductType {
+    return toPublicProduct(product, this.availabilityDisplayMode);
+  }
+
+  /** Catalog page for buyers (see the class note). */
+  getCatalogPage(query: CatalogQuery) {
+    return this.loadCatalogPage(query, (product) => this.toPublic(product));
+  }
+
+  /** Catalog page for staff (manager/admin API only): stored stock, reserves and 1C ids. */
+  getAdminCatalogPage(query: CatalogQuery) {
+    return this.loadCatalogPage(query, (product) => product);
+  }
+
   async getActiveProducts(): Promise<Product[]> {
     return (await this.getCatalogPage({ type: "all", sort: "newest", page: 1, pageSize: 96 })).items;
   }
 
   async getProductBySlug(slug: string): Promise<ProductDetails | null> {
     const row = await this.productRepository.findPublicBySlug(this.pool, slug);
-    return row ? { ...mapCatalogProduct(row), name: row.name, description: row.description ?? "" } : null;
+    return row
+      ? this.toPublic({ ...mapCatalogProduct(row), name: row.name, description: row.description ?? "" })
+      : null;
   }
 
   async getProductsByIds(productIds: string[]): Promise<Product[]> {
     if (productIds.length === 0) return [];
-    return (await this.productRepository.findPublicByIds(this.pool, productIds)).map(mapCatalogProduct);
+    return (await this.productRepository.findPublicByIds(this.pool, productIds)).map((row) =>
+      this.toPublic(mapCatalogProduct(row)),
+    );
   }
 }

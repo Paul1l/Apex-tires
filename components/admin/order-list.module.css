@@ -1,0 +1,108 @@
+/* Admin order list: filters toolbar, table details, pager. */
+.toolbar {
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+}
+
+.field > span {
+  color: #6f746d;
+  font-size: 7px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.field > select,
+.field > input {
+  height: 39px;
+  min-width: 0;
+  border: 1px solid #dce0da;
+  border-radius: 4px;
+  background: #fff;
+  padding: 0 10px;
+  color: #20231f;
+  font-size: 9px;
+}
+
+.toolbarActions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.table td {
+  font-size: 9px;
+}
+
+.orderLink {
+  color: #191c19;
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-color: #c9b48c;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.orderLink:hover {
+  text-decoration-color: currentColor;
+}
+
+.itemsCell {
+  max-width: 280px;
+}
+
+.integrationFailed {
+  color: var(--red);
+  font-weight: 800;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pager button {
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.successMessage,
+.errorMessage {
+  margin: -8px 0 12px;
+  border-radius: 4px;
+  padding: 10px 13px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.successMessage {
+  border: 1px solid #c6dccd;
+  background: #eef6f0;
+  color: #2f6343;
+}
+
+.errorMessage {
+  border: 1px solid #e5c3be;
+  background: #fbefed;
+  color: #8c4741;
+}
+
+@media (max-width: 760px) {
+  .toolbar > * {
+    flex: 1 1 140px;
+  }
+
+  .toolbarActions {
+    margin-left: 0;
+  }
+
+  .pager {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}

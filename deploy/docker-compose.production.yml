@@ -4,12 +4,20 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
+      # Schema owner: migrations and backups only (the image creates it as a
+      # superuser). The running app uses POSTGRES_APP_USER (SEC-11).
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Read by postgres/init/10-app-role.sql: on the first start of an empty
+      # volume automatically, on an existing database by the command in
+      # docs/VDS_DEPLOYMENT.md.
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-apex_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backups:/backups
       - ./scripts/backup-postgres.sh:/scripts/backup-postgres.sh:ro
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -18,6 +26,8 @@ services:
     networks: [backend]
 
   app:
+    # Named so that the one-off `migrate` service runs the same build.
+    image: apex-wheels-app:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -63,12 +73,27 @@ services:
         NEXT_PUBLIC_CATALOG_DATA_MODE: database
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Application role: data only, no DDL (deploy/postgres/init/10-app-role.sql).
+      # The owner credentials are not passed to the running app.
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-apex_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/${POSTGRES_DB}
       DATABASE_SSL_MODE: disable
       CATALOG_IMPORT_BATCH_SIZE: ${CATALOG_IMPORT_BATCH_SIZE:-1000}
       FITMENT_IMPORT_BATCH_SIZE: ${FITMENT_IMPORT_BATCH_SIZE:-1000}
+      IMPORT_JOB_STALE_MINUTES: ${IMPORT_JOB_STALE_MINUTES:-30}
       ORDER_RESERVATION_TTL_HOURS: ${ORDER_RESERVATION_TTL_HOURS:-24}
       ORDER_NUMBER_PREFIX: ${ORDER_NUMBER_PREFIX:-AW}
+      # Nginx in front of the app sets X-Real-IP from $remote_addr.
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-nginx}
+      # Empty values fall back to the defaults documented in .env.example.
+      RATE_LIMIT_ORDERS_PER_IP: ${RATE_LIMIT_ORDERS_PER_IP:-}
+      RATE_LIMIT_ORDERS_PER_CONTACT: ${RATE_LIMIT_ORDERS_PER_CONTACT:-}
+      ORDER_MAX_ACTIVE_RESERVATIONS_PER_CONTACT: ${ORDER_MAX_ACTIVE_RESERVATIONS_PER_CONTACT:-}
+      RATE_LIMIT_FITMENT_REQUESTS_PER_IP: ${RATE_LIMIT_FITMENT_REQUESTS_PER_IP:-}
+      RATE_LIMIT_FITMENT_REQUESTS_PER_PHONE: ${RATE_LIMIT_FITMENT_REQUESTS_PER_PHONE:-}
+      RATE_LIMIT_GUEST_CART_WRITES_PER_IP: ${RATE_LIMIT_GUEST_CART_WRITES_PER_IP:-}
+      RATE_LIMIT_AUTH_CODE_REQUESTS_PER_IP: ${RATE_LIMIT_AUTH_CODE_REQUESTS_PER_IP:-}
+      RATE_LIMIT_ONEC_REQUESTS_PER_IP: ${RATE_LIMIT_ONEC_REQUESTS_PER_IP:-}
+      OTP_MAX_FAILED_ATTEMPTS_PER_EMAIL: ${OTP_MAX_FAILED_ATTEMPTS_PER_EMAIL:-}
       OTP_CODE_PEPPER: ${OTP_CODE_PEPPER}
       INTERNAL_JOB_SECRET: ${INTERNAL_JOB_SECRET}
       YANDEX_POSTBOX_ACCESS_KEY_ID: ${YANDEX_POSTBOX_ACCESS_KEY_ID}
@@ -79,16 +104,57 @@ services:
       ONEC_BASE_URL: ${ONEC_BASE_URL:-}
       ONEC_API_KEY: ${ONEC_API_KEY:-}
       YANDEX_METRIKA_COUNTER_ID: ${YANDEX_METRIKA_COUNTER_ID:-}
+      # Product photos uploaded in the admin (docs/ADMIN_CATALOG.md). Fixed to
+      # the mount point of the `uploads` volume below, not read from
+      # .env.production. Empty limits fall back to 5 MB and 10 photos; above
+      # ~7.9 MB raise client_max_body_size of the photo location in nginx.
+      UPLOADS_DIR: /app/uploads
+      PRODUCT_IMAGE_MAX_BYTES: ${PRODUCT_IMAGE_MAX_BYTES:-}
+      PRODUCT_IMAGE_MAX_COUNT: ${PRODUCT_IMAGE_MAX_COUNT:-}
+    volumes:
+      # Persistent: survives rebuilds and `up -d`. Backup:
+      # deploy/scripts/backup-uploads.sh. `docker compose down -v` deletes it.
+      - uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
     networks: [backend, frontend]
 
+  # Migrations as the schema owner (POSTGRES_USER), started only on demand:
+  #   docker compose --env-file .env.production -f deploy/docker-compose.production.yml run --rm migrate
+  # Uses the image built for `app` (build app first); not started by `up`.
+  # The command is what `pnpm db:migrate` runs, without pnpm: the image has
+  # no pnpm, and the `backend` network has no internet to download it.
+  migrate:
+    image: apex-wheels-app:latest
+    pull_policy: never
+    profiles: ["tools"]
+    restart: "no"
+    command: ["node_modules/.bin/tsx", "server/database/run-migrations.ts"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_SSL_MODE: disable
+      # For the first administrator (`pnpm admin:create`, docs/AUTHENTICATION.md),
+      # run without pnpm:
+      #   … run --rm migrate node_modules/.bin/tsx server/tools/create-staff.ts --email … --name "…"
+      # The staff key is encrypted with a key derived from the same pepper as
+      # the app, and the authenticator app shows the brand name.
+      OTP_CODE_PEPPER: ${OTP_CODE_PEPPER}
+      NEXT_PUBLIC_BRAND_NAME: ${NEXT_PUBLIC_BRAND_NAME}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
   nginx:
-    image: nginx:1.27-alpine
+    # Stable branch; patch releases arrive with `docker compose pull nginx`.
+    image: nginx:1.30-alpine
     restart: unless-stopped
     environment:
       SITE_HOST: ${SITE_HOST}
+      # Optional 1C address allowlist (docs/VDS_DEPLOYMENT.md). Keep it defined,
+      # even empty: the nginx template refers to it.
+      ONEC_ALLOWED_IPS: ${ONEC_ALLOWED_IPS:-}
     ports:
       - "80:80"
       - "443:443"
@@ -101,6 +167,9 @@ services:
 
 volumes:
   postgres_data:
+  # Product photos (UPLOADS_DIR of `app`). A new volume takes the owner of
+  # /app/uploads in the image (uid 10001, the app user).
+  uploads:
 
 networks:
   backend:

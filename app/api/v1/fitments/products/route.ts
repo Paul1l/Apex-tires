@@ -5,6 +5,7 @@ import {
 } from "@/server/bootstrap/application-services";
 import { applicationLogger } from "@/server/types/common";
 import { catalogQuerySchema } from "@/server/validators/catalog-query-schema";
+import { parseOptionalVehicleYear } from "@/server/validators/vehicle-query";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,8 +15,9 @@ export async function GET(request: NextRequest) {
   const model = request.nextUrl.searchParams.get("model")?.trim() ?? "";
   const generation = request.nextUrl.searchParams.get("generation")?.trim() || undefined;
   const modification = request.nextUrl.searchParams.get("modification")?.trim() || undefined;
-  const rawYear = request.nextUrl.searchParams.get("year");
-  const year = rawYear ? Number(rawYear) : undefined;
+  // Absent or empty year means "not specified", as in the vehicle reference.
+  const yearParameter = parseOptionalVehicleYear(request.nextUrl.searchParams.get("year"), 1900, 2200);
+  const year = yearParameter.valid ? yearParameter.year : undefined;
   if (
     !make ||
     !model || !generation ||
@@ -23,7 +25,7 @@ export async function GET(request: NextRequest) {
     model.length > 160 ||
     (generation && generation.length > 120) ||
     (modification && modification.length > 160) ||
-    (year !== undefined && (!Number.isInteger(year) || year < 1900 || year > 2200))
+    !yearParameter.valid
   ) {
     return NextResponse.json(
       { ok: false, code: "INVALID_VEHICLE", message: "Проверьте параметры автомобиля." },

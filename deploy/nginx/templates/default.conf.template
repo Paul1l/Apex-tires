@@ -1,3 +1,60 @@
+server_tokens off;
+
+# Paths whose %-encoding does not decode to valid UTF-8 (/legal/%C0%AF,
+# /tires/%E0%A4) make the Next.js router throw a DecodeError before any
+# application code runs: 500 without the application's headers (QA-05,
+# QA-16). The path of the raw request URI passes only if every %XX sequence
+# is ASCII or a well-formed UTF-8 sequence (RFC 3629: no overlong forms,
+# surrogates or code points above U+10FFFF). Not checked: unencoded bytes
+# above 0x7F (the Node.js HTTP parser itself answers 400) and the query string
+# after "?" (Next.js parses broken escapes there without errors).
+# Syntactically broken escapes (%ZZ, a trailing %A, %00) never get here:
+# nginx itself answers 400 while parsing the request line.
+# Possessive quantifiers (++, *+) rule out catastrophic backtracking.
+map $request_uri $apex_bad_path_encoding {
+  default 1;
+  "~*^(?:[^%?]++|%[0-7][0-9a-f]|%c[2-9a-f]%[89ab][0-9a-f]|%d[0-9a-f]%[89ab][0-9a-f]|%e0%[ab][0-9a-f]%[89ab][0-9a-f]|%e[1-9a-cef]%[89ab][0-9a-f]%[89ab][0-9a-f]|%ed%[89][0-9a-f]%[89ab][0-9a-f]|%f0%[9ab][0-9a-f](?:%[89ab][0-9a-f]){2}|%f[1-3](?:%[89ab][0-9a-f]){3}|%f4%8[0-9a-f](?:%[89ab][0-9a-f]){2})*+(?:[?].*)?$" 0;
+}
+
+# Optional allowlist for the 1C exchange (/api/integrations/1c/), SEC-17.
+# ONEC_ALLOWED_IPS (environment of the nginx container, substituted at start)
+# lists exact client addresses separated by commas or spaces, written the way
+# $remote_addr shows them (IPv6 in compressed form). Empty: no address check,
+# access is by the API key only. A non-empty list without the client's
+# address gives 403 before the request reaches the application. The list is
+# compared as text (backreference \1): CIDR ranges are not supported and
+# never match.
+map "$remote_addr|${ONEC_ALLOWED_IPS}" $apex_onec_ip_denied {
+  "~^[^|]*\|[\s,]*$" 0;
+  "~*^([^|]+)\|(?:.*[\s,])?\1(?:[\s,].*)?$" 0;
+  default 1;
+}
+
+# OPTIONAL, NOT ENABLED: staff allowlist (owner's decision, D21).
+# By default /admin is reachable from any network: staff sign in with a code
+# from an authenticator app, and trusted devices keep a stranger who knows
+# the email from locking them out. To admit /admin, /api/admin/ and
+# /api/auth/staff/ only from the shop's addresses, remove the leading "#"
+# from the code lines here ("#geo", "#map" and the lines up to their "#}")
+# and from the "#if" block in the TLS server below, replace the example
+# addresses, run `nginx -t` and restart nginx (docs/VDS_DEPLOYMENT.md).
+# Other clients get 403 from nginx before the application; the storefront,
+# customer sign-in (/api/auth/ outside /api/auth/staff/), /uploads, 1C and
+# background jobs are not affected. geo accepts exact addresses and CIDR
+# ranges. Never list the Docker network gateway (172.x.0.1): every IPv6
+# client arrives from it (docs/VDS_DEPLOYMENT.md, "IPv6"). Check first that
+# the addresses are static, otherwise staff are locked out until nginx is
+# changed back over SSH.
+#geo $apex_staff_network {
+#  default 0;
+#  203.0.113.10 1;
+#  198.51.100.0/24 1;
+#}
+#map "$apex_staff_network:$uri" $apex_staff_ip_denied {
+#  default 0;
+#  "~*^0:/(?:admin|api/admin|api/auth/staff)(?:/|$)" 1;
+#}
+
 server {
   listen 80;
   server_name ${SITE_HOST};
@@ -19,33 +76,119 @@ server {
   ssl_certificate_key /etc/letsencrypt/live/${SITE_HOST}/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
   ssl_session_cache shared:SSL:10m;
+
+  # HSTS is set only here: the application does not know about TLS.
+  # nosniff and Referrer-Policy are also set here so that nginx's own responses
+  # (400, 403, 413, 502, redirects) carry them; the application's copies are
+  # hidden to avoid duplicate headers. X-Frame-Options, Content-Security-Policy
+  # and Permissions-Policy come from the application (next.config.ts
+  # headers()), so a future per-request CSP nonce is not overridden by nginx.
+  # A location (or an "if" block) inherits these add_header lines only if it
+  # has no add_header of its own: do not add one below without repeating all
+  # three there, or its responses lose them.
   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
   add_header X-Content-Type-Options nosniff always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;
+  proxy_hide_header X-Content-Type-Options;
+  proxy_hide_header Referrer-Policy;
 
+  # Request body limit of every endpoint without its own value below (photo
+  # upload: 8m, imports: 200m).
   client_max_body_size 6m;
+
+  # 400, not 404: the request target itself is malformed, and it is the code
+  # nginx already returns for %ZZ or a truncated escape, so every broken
+  # %-encoding gets one answer. Search engines treat both codes the same way.
+  if ($apex_bad_path_encoding) {
+    return 400;
+  }
+
+  # Optional staff allowlist, together with the geo/map blocks at the top
+  # (not enabled). At server level it covers every location below, including
+  # /api/admin/imports/ and the photo upload. $uri is the decoded and
+  # normalized path, so /%61dmin or //admin are denied as well.
+  #if ($apex_staff_ip_denied) {
+  #  return 403;
+  #}
+
+  # Compression (PERF-06) is done here, not in next start: Accept-Encoding is
+  # not passed to the application (see below), so it never compresses and a
+  # response is never compressed twice. text/html is always included. Formats
+  # that are already compressed (avif, webp, jpeg, png, woff2) are not listed.
+  # gzip_min_length applies only to responses with Content-Length.
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 5;
+  gzip_min_length 1024;
+  gzip_types text/css text/plain text/xml text/javascript text/x-component
+             application/javascript application/json application/manifest+json
+             application/xml application/rss+xml image/svg+xml text/markdown;
+
+  # Proxy settings shared by every location below: none of them sets its own
+  # proxy_set_header, so all of these are inherited.
+  # Client address for the application (TRUSTED_PROXY=nginx reads X-Real-IP).
+  # Client-supplied X-Forwarded-For and CF-Connecting-IP are replaced/removed,
+  # so they cannot be used to spoof the address.
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $remote_addr;
+  proxy_set_header CF-Connecting-IP "";
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_set_header Accept-Encoding "";
+  proxy_connect_timeout 5s;
+  proxy_read_timeout 60s;
+
+  # Background jobs (SEC-17). cron calls them inside the app container
+  # (deploy/scripts/run-internal-job.sh), so through nginx they are reachable
+  # only from its own loopback. Private ranges (172.16.0.0/12 and so on) are
+  # deliberately not allowed: for IPv6 clients of a published port docker-proxy
+  # substitutes the Docker network gateway address, which is private.
+  location ^~ /api/internal/ {
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    proxy_pass http://app:3000;
+  }
+
+  # 1C exchange: API key in the application plus the optional address
+  # allowlist above. "^~" keeps future regex locations from taking over.
+  location ^~ /api/integrations/1c/ {
+    if ($apex_onec_ip_denied) {
+      return 403;
+    }
+    proxy_pass http://app:3000;
+  }
+
+  # Product photo upload, POST /api/admin/products/<id>/images (multipart,
+  # docs/ADMIN_CATALOG.md). The application accepts a body of up to
+  # PRODUCT_IMAGE_MAX_BYTES (default 5 MiB) plus 64 KiB for the form, and
+  # rejects anything larger itself (413 IMAGE_TOO_LARGE, JSON). 8m leaves
+  # about 3 MiB of headroom above the default. If PRODUCT_IMAGE_MAX_BYTES is
+  # raised above 8323072 bytes (~7.9 MiB), set this to at least
+  # PRODUCT_IMAGE_MAX_BYTES + 64 KiB, rounded up to whole megabytes (20m
+  # covers the maximum allowed value, 20000000). Every other endpoint keeps
+  # the 6m of the server level (imports: 200m below).
+  location ~ ^/api/admin/products/[^/]+/images$ {
+    client_max_body_size 8m;
+    proxy_pass http://app:3000;
+  }
 
   location /api/admin/imports/ {
     client_max_body_size 200m;
     proxy_request_buffering off;
-    proxy_pass http://app:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_connect_timeout 5s;
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
+    proxy_pass http://app:3000;
   }
 
+  # Uploaded product photos (/uploads/products/<id>/<file>) also go here, to
+  # the application on purpose: its route serves only the exact file-name
+  # pattern, with a fixed Content-Type, nosniff, a sandbox CSP and immutable
+  # caching. Do not serve the uploads volume from nginx directly without
+  # reproducing all of that.
   location / {
     proxy_pass http://app:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_connect_timeout 5s;
-    proxy_read_timeout 60s;
   }
 }

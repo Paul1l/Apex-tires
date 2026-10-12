@@ -12,6 +12,16 @@ export class NotificationService {
     private readonly logger: ApplicationLogger,
   ) {}
 
+  /** False while no delivery provider (Postbox) is configured. */
+  hasProviders(): boolean {
+    return this.providers.length > 0;
+  }
+
+  /** Undelivered notifications; they stay in the outbox until a provider sends them. */
+  countUnsent(): Promise<number> {
+    return this.repository.countUnsent(this.pool);
+  }
+
   async processPending(limit = 20): Promise<{ sent: number; failed: number }> {
     let sent = 0;
     let failed = 0;

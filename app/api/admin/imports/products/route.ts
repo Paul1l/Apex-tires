@@ -7,6 +7,7 @@ import { requireUserRole } from "@/server/security/request-auth";
 import { applicationLogger } from "@/server/types/common";
 import { ApplicationError, toSafeError } from "@/server/utils/errors";
 import { readCsvUpload } from "@/server/utils/csv-upload";
+import { revalidateStorefrontCatalog } from "@/server/cache/storefront-revalidation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,13 +23,20 @@ export async function POST(request: Request) {
     }
     const user = await requireUserRole(request, ["manager", "admin"]);
     const upload = await readCsvUpload(request);
-    const report =
-      await createApplicationServices().catalogImportService.importProductsCsvStream(
-        upload.stream,
-        upload.filename,
-        upload.mode,
-        user.id,
-      );
+    let report;
+    try {
+      report =
+        await createApplicationServices().catalogImportService.importProductsCsvStream(
+          upload.stream,
+          upload.filename,
+          upload.mode,
+          user.id,
+        );
+    } finally {
+      // Batches are committed as they go, so even an interrupted import may
+      // have changed products, prices or stock shown on the cached pages.
+      revalidateStorefrontCatalog("products-csv-import");
+    }
     return NextResponse.json({ ok: report.ok, report }, { status: report.ok ? 200 : 207 });
   } catch (error) {
     applicationLogger.error({ error }, "Product CSV import failed");

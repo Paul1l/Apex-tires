@@ -5,6 +5,7 @@ import { toSafeError } from "@/server/utils/errors";
 import { readJsonRequest } from "@/server/utils/http";
 import { bulkProductSchema } from "@/server/validators/admin-product-schema";
 import { updateSelectedProducts } from "@/server/services/admin-product-service";
+import { revalidateStorefrontCatalog } from "@/server/cache/storefront-revalidation";
 
 export const runtime = "nodejs";
 export async function POST(request: Request) {
@@ -12,6 +13,7 @@ export async function POST(request: Request) {
     const actor = await requireUserRole(request, ["admin"]);
     const input = bulkProductSchema.parse(await readJsonRequest(request, 20000));
     const updated = await updateSelectedProducts(createApplicationServices().pool, actor.id, input);
+    revalidateStorefrontCatalog(`admin-products-${input.action}`);
     return NextResponse.json({ ok: true, updated });
   } catch (error) { const safe = toSafeError(error); return NextResponse.json(safe.body, { status: safe.statusCode }); }
 }

@@ -1,0 +1,5 @@
+# Created on the server next to docker-compose.production.yml: database dumps
+# and photo archives (personal data, large) and Let's Encrypt keys. Never
+# commit them.
+/backups/
+/certbot/

@@ -1,27 +1,26 @@
 import { NextResponse } from "next/server";
-import { isIP } from "node:net";
 import {
   createApplicationServices,
   databaseIsConfigured,
 } from "@/server/bootstrap/application-services";
+import { readSecurityLimits } from "@/server/config/security-limits";
 import { applicationLogger } from "@/server/types/common";
 import { ApplicationError, toSafeError } from "@/server/utils/errors";
 import { readJsonRequest } from "@/server/utils/http";
-import { createOrderSchema } from "@/server/validators/order-schemas";
-import { formatValidationIssues } from "@/server/validators/one-c-schemas";
+import { validateCreateOrder } from "@/server/validators/order-schemas";
 import { getAuthenticatedUser } from "@/server/security/request-auth";
 import { requireSameOrigin } from "@/server/security/request-origin";
+import { clientIpRateLimitKey, getClientIp } from "@/server/security/client-ip";
+import {
+  enforceRateLimit,
+  normalizeEmailForLimits,
+} from "@/server/security/rate-limit-policies";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function readRequesterIpAddress(request: Request): string | null {
-  const address =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    null;
-  return address && isIP(address) ? address : null;
-}
+const TOO_MANY_ORDERS_MESSAGE =
+  "Слишком много заказов за короткое время. Для срочного заказа позвоните менеджеру.";
 
 export async function POST(request: Request) {
   try {
@@ -35,37 +34,53 @@ export async function POST(request: Request) {
       });
     }
 
-    const validationResult = createOrderSchema.safeParse(
-      await readJsonRequest(request, 100_000),
+    const services = createApplicationServices();
+    const limits = readSecurityLimits();
+    const clientIp = getClientIp(request);
+    await enforceRateLimit(
+      services.rateLimiter,
+      limits.orders.perIp,
+      clientIpRateLimitKey(clientIp),
+      { message: TOO_MANY_ORDERS_MESSAGE },
     );
-    if (!validationResult.success) {
+
+    const validationResult = validateCreateOrder(await readJsonRequest(request, 100_000));
+    if (!validationResult.success || !validationResult.data) {
       throw new ApplicationError({
         code: "VALIDATION_ERROR",
-        message: "Проверьте контактные данные, способ получения и состав заказа.",
+        message: validationResult.message,
         statusCode: 422,
-        details: formatValidationIssues(validationResult.error),
+        details: validationResult.details,
       });
     }
 
-    const authenticatedUser = await getAuthenticatedUser(request);
-    const order = await createApplicationServices().orderService.createOrder(
-      validationResult.data,
-      {
-        userId: authenticatedUser?.id,
-        requesterAddress: readRequesterIpAddress(request),
-        userAgent: request.headers.get("user-agent")?.slice(0, 500) ?? null,
-      },
+    const order = validationResult.data;
+    await enforceRateLimit(services.rateLimiter, limits.orders.perPhone, order.customer.phone, {
+      message: TOO_MANY_ORDERS_MESSAGE,
+    });
+    await enforceRateLimit(
+      services.rateLimiter,
+      limits.orders.perEmail,
+      normalizeEmailForLimits(order.customer.email),
+      { message: TOO_MANY_ORDERS_MESSAGE },
     );
+
+    const authenticatedUser = await getAuthenticatedUser(request);
+    const createdOrder = await services.orderService.createOrder(order, {
+      userId: authenticatedUser?.id,
+      requesterAddress: clientIp,
+      userAgent: request.headers.get("user-agent")?.slice(0, 500) ?? null,
+    });
     return NextResponse.json(
       {
         ok: true,
         order: {
-          id: order.id,
-          number: order.number,
-          duplicate: order.duplicate ?? false,
+          id: createdOrder.id,
+          number: createdOrder.number,
+          duplicate: createdOrder.duplicate ?? false,
         },
       },
-      { status: order.duplicate ? 200 : 201 },
+      { status: createdOrder.duplicate ? 200 : 201 },
     );
   } catch (error) {
     applicationLogger.error({ error }, "Order creation failed");

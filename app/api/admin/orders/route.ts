@@ -1,34 +1,31 @@
 import { NextResponse } from "next/server";
-import {
-  createApplicationServices,
-  databaseIsConfigured,
-} from "@/server/bootstrap/application-services";
 import { requireUserRole } from "@/server/security/request-auth";
-import { applicationLogger } from "@/server/types/common";
-import { ApplicationError, toSafeError } from "@/server/utils/errors";
+import { createAdminOrderService } from "@/server/services/admin-order-factory";
+import {
+  adminOrderErrorResponse,
+  NO_STORE_HEADERS,
+  requireOrderStorage,
+  validationFailed,
+} from "@/server/services/admin-order-http";
+import { parseAdminOrderListQuery } from "@/server/validators/admin-order-schema";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/**
+ * Admin order list: ?q= (number, phone digits, email, customer name),
+ * status, integrationStatus, from/to (YYYY-MM-DD, Barnaul days), page,
+ * pageSize (1-100, default 25). Without parameters: the newest 25 orders.
+ */
 export async function GET(request: Request) {
   try {
-    if (!databaseIsConfigured()) {
-      throw new ApplicationError({
-        code: "ORDER_STORAGE_NOT_CONFIGURED",
-        message: "PostgreSQL-заказы пока не подключены.",
-        statusCode: 503,
-      });
-    }
+    requireOrderStorage();
     await requireUserRole(request, ["manager", "admin"]);
-    const orders =
-      await createApplicationServices().orderService.getOrdersForAdministration();
-    return NextResponse.json(
-      { ok: true, items: orders },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    const query = parseAdminOrderListQuery(new URL(request.url).searchParams);
+    if (!query.success) throw validationFailed(query.error, "Проверьте параметры поиска заказов.");
+    const result = await createAdminOrderService().listOrders(query.data);
+    return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE_HEADERS });
   } catch (error) {
-    applicationLogger.error({ error }, "Administrative orders request failed");
-    const safeError = toSafeError(error);
-    return NextResponse.json(safeError.body, { status: safeError.statusCode });
+    return adminOrderErrorResponse(error, "Administrative orders request failed");
   }
 }

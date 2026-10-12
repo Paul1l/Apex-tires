@@ -1,24 +1,7 @@
-import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextResponse } from "next/server";
+import { readYandexMetrikaCounterId } from "@/server/config/public-runtime-config";
 
 export const dynamic = "force-dynamic";
-
-async function readYandexMetrikaCounterId(): Promise<number | null> {
-  let configuredCounterId: string | undefined;
-
-  try {
-    const { env } = await getCloudflareContext({ async: true });
-    configuredCounterId = (env as CloudflareEnv).YANDEX_METRIKA_COUNTER_ID;
-  } catch {
-    configuredCounterId = process.env.YANDEX_METRIKA_COUNTER_ID;
-  }
-
-  if (!configuredCounterId || !/^\d+$/.test(configuredCounterId)) {
-    return null;
-  }
-
-  return Number(configuredCounterId);
-}
 
 /**
  * Returns non-secret runtime settings that client components are allowed to use.
@@ -26,7 +9,7 @@ async function readYandexMetrikaCounterId(): Promise<number | null> {
 export async function GET() {
   return NextResponse.json(
     {
-      yandexMetrikaCounterId: await readYandexMetrikaCounterId(),
+      yandexMetrikaCounterId: readYandexMetrikaCounterId(),
     },
     {
       headers: {

@@ -171,10 +171,9 @@ export async function sendYandexPostboxEmail(
   });
 
   if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(
-      `Yandex Postbox вернул HTTP ${response.status}: ${errorBody.slice(0, 500)}`,
-    );
+    // The response body may echo recipient data; keep only the status.
+    await response.body?.cancel();
+    throw new Error(`Yandex Postbox вернул HTTP ${response.status}`);
   }
 }
 

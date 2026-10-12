@@ -1,10 +1,13 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { businessConfig } from "@/config/business";
 import { legalDocuments } from "@/lib/legal-documents";
+import { createPageSeoMetadata } from "@/lib/structured-data";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Правовая информация",
-  description: `Документы интернет-магазина ${businessConfig.brandName}.`,
+  description: `Документы интернет-магазина ${businessConfig.brandName}: оферта, доставка и возврат, персональные данные, реквизиты продавца.`,
+  ...createPageSeoMetadata("/legal"),
 };
 
 export default function LegalDocumentsIndexPage() {
@@ -22,11 +25,17 @@ export default function LegalDocumentsIndexPage() {
       <section className="legal-hero">
         <p className="eyebrow">Правовая информация</p>
         <h1>Документы магазина</h1>
-        <p>
-          Структура документов подготовлена к запуску. До публикации магазина
-          владелец должен заполнить поля реквизитов и передать тексты на
-          юридическую проверку.
-        </p>
+        {businessConfig.deploymentStage === "production" ? (
+          <p>
+            Условия покупки, доставки и возврата, правила обработки
+            персональных данных и реквизиты продавца.
+          </p>
+        ) : (
+          <p>
+            Предварительная редакция документов. Реквизиты продавца и тексты
+            будут уточнены и проверены до начала приёма заказов.
+          </p>
+        )}
       </section>
 
       <section className="legal-document-grid">

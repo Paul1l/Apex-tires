@@ -22,7 +22,9 @@ import {
   type AuthenticatedUserRow,
   type UserRole,
 } from "../repositories/auth-repository";
+import { effectiveSessionRole } from "../security/staff-roles";
 import { ApplicationError } from "../utils/errors";
+import type { DatabaseExecutor } from "../types/common";
 
 const CODE_LIFETIME_MILLISECONDS = 10 * 60 * 1_000;
 const RESEND_DELAY_MILLISECONDS = 60 * 1_000;
@@ -30,6 +32,8 @@ const RATE_LIMIT_WINDOW_MILLISECONDS = 10 * 60 * 1_000;
 const MAXIMUM_DESTINATION_REQUESTS = 3;
 const MAXIMUM_REQUESTER_REQUESTS = 10;
 const MAXIMUM_CODE_ATTEMPTS = 5;
+const DEFAULT_MAXIMUM_FAILED_ATTEMPTS_PER_DESTINATION = 15;
+const DEFAULT_FAILED_ATTEMPTS_WINDOW_MILLISECONDS = 24 * 60 * 60 * 1_000;
 const LEGAL_DOCUMENT_VERSION = "2026-07-31";
 
 export interface AuthServiceDependencies {
@@ -42,12 +46,35 @@ export interface AuthServiceDependencies {
     email: string,
     code: string,
   ) => Promise<void>;
+  /**
+   * Failed code attempts allowed for one email across all of its challenges
+   * within the rolling window; beyond it the address is locked until enough
+   * old attempts leave the window.
+   */
+  maximumFailedAttemptsPerDestination?: number;
+  failedAttemptsWindowMilliseconds?: number;
 }
 
 export interface VerifiedSession {
   token: string;
   expiresInSeconds: number;
   user: UserProfile;
+}
+
+function formatLockoutDuration(milliseconds: number): string {
+  const minutes = Math.max(1, Math.ceil(milliseconds / 60_000));
+  return minutes < 60 ? `${minutes} мин.` : `${Math.ceil(minutes / 60)} ч.`;
+}
+
+function createDestinationLockedError(retryAfterMilliseconds: number): ApplicationError {
+  // Same code and status as the other OTP limits so the existing UI shows the message.
+  return new ApplicationError({
+    code: "RATE_LIMIT_EXCEEDED",
+    message:
+      "Слишком много неверных кодов для этой почты. Вход временно заблокирован, " +
+      `попробуйте через ${formatLockoutDuration(retryAfterMilliseconds)} или обратитесь в поддержку.`,
+    statusCode: 429,
+  });
 }
 
 function toUserProfile(user: AuthenticatedUserRow): UserProfile {
@@ -62,6 +89,38 @@ function toUserProfile(user: AuthenticatedUserRow): UserProfile {
 
 export class AuthService {
   constructor(private readonly dependencies: AuthServiceDependencies) {}
+
+  /**
+   * Returns how long the destination stays locked (0 when it is not locked).
+   * The lock lasts until enough of the oldest failed attempts leave the
+   * rolling window for the total to drop below the limit.
+   */
+  private async getDestinationLockRemainingMilliseconds(
+    database: DatabaseExecutor,
+    destinationHash: string,
+  ): Promise<number> {
+    const maximumFailures =
+      this.dependencies.maximumFailedAttemptsPerDestination ??
+      DEFAULT_MAXIMUM_FAILED_ATTEMPTS_PER_DESTINATION;
+    const windowMilliseconds =
+      this.dependencies.failedAttemptsWindowMilliseconds ??
+      DEFAULT_FAILED_ATTEMPTS_WINDOW_MILLISECONDS;
+    const now = Date.now();
+    const failures = await this.dependencies.repository.listFailedAttemptsSince(
+      database,
+      destinationHash,
+      new Date(now - windowMilliseconds),
+    );
+    let remainingFailures = failures.reduce((sum, row) => sum + Number(row.attempts), 0);
+    if (remainingFailures < maximumFailures) return 0;
+    for (const row of failures) {
+      remainingFailures -= Number(row.attempts);
+      if (remainingFailures < maximumFailures) {
+        return Math.max(1_000, new Date(row.created_at).getTime() + windowMilliseconds - now);
+      }
+    }
+    return windowMilliseconds;
+  }
 
   async requestEmailCode(input: {
     rawEmail: string;
@@ -83,7 +142,11 @@ export class AuthService {
       `requester:${input.requesterAddress}`,
     );
     const windowStartedAt = new Date(Date.now() - RATE_LIMIT_WINDOW_MILLISECONDS);
-    const [recentChallenge, destinationCount, requesterCount] = await Promise.all([
+    const [lockRemainingMilliseconds, recentChallenge, destinationCount, requesterCount] = await Promise.all([
+      this.getDestinationLockRemainingMilliseconds(
+        this.dependencies.pool,
+        destinationHash,
+      ),
       this.dependencies.repository.findMostRecentChallenge(
         this.dependencies.pool,
         destinationHash,
@@ -102,6 +165,9 @@ export class AuthService {
       ),
     ]);
 
+    if (lockRemainingMilliseconds > 0) {
+      throw createDestinationLockedError(lockRemainingMilliseconds);
+    }
     if (
       recentChallenge &&
       Date.now() - new Date(recentChallenge.created_at).getTime() <
@@ -199,6 +265,19 @@ export class AuthService {
           message: "Превышено число попыток. Запросите новый код.",
           statusCode: 429,
         });
+      }
+      // Per-address limit across all challenges: checked before the code is
+      // compared, so even a correct code is refused while the address is locked.
+      await this.dependencies.repository.lockDestinationForVerification(
+        database,
+        challenge.destination_hash,
+      );
+      const lockRemainingMilliseconds = await this.getDestinationLockRemainingMilliseconds(
+        database,
+        challenge.destination_hash,
+      );
+      if (lockRemainingMilliseconds > 0) {
+        throw createDestinationLockedError(lockRemainingMilliseconds);
       }
 
       const destinationHash = await createSecureDigest(
@@ -305,7 +384,8 @@ export class AuthService {
       return {
         token,
         expiresInSeconds: SESSION_LIFETIME_SECONDS,
-        user: toUserProfile(user),
+        // An email-code session never grants staff rights (staff sign in at /admin).
+        user: toUserProfile({ ...user, role: effectiveSessionRole(user.role, "customer_otp") }),
       };
     });
     if ("error" in verificationResult) throw verificationResult.error;
@@ -334,7 +414,11 @@ export class AuthService {
       }
       return null;
     }
-    return toUserProfile(sessionUser);
+    // The role this session grants: staff roles only through a staff sign-in.
+    return toUserProfile({
+      ...sessionUser,
+      role: effectiveSessionRole(sessionUser.role, sessionUser.auth_method),
+    });
   }
 
   async revokeSession(token: string): Promise<void> {

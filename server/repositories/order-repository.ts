@@ -18,10 +18,32 @@ export interface CheckoutProductRow {
   id: string;
   sku: string;
   name: string;
+  /** Catalog title parts (brand, model, size) for customer-facing messages. */
+  kind: "tire" | "wheel";
+  brand: string;
+  model: string;
+  width: number;
+  profile: number;
+  diameter: number;
+  pcd: string | null;
   is_active: boolean;
   amount_kopecks: number | string | null;
   available: number;
   product_attributes?: JsonValue;
+}
+
+/**
+ * Stock changed between the availability check and the reservation (for
+ * example a concurrent 1C/CSV stock update). Mapped to a 409 by OrderService.
+ */
+export class InsufficientStockError extends Error {
+  constructor(
+    readonly productId: string,
+    readonly availableQuantity: number,
+  ) {
+    super("INSUFFICIENT_STOCK");
+    this.name = "InsufficientStockError";
+  }
 }
 
 export interface NormalizedOrderItem {
@@ -36,6 +58,8 @@ export interface NormalizedOrderItem {
 
 export interface PersistedOrderInput extends Omit<CreateOrderInput, "items"> {
   items: NormalizedOrderItem[];
+  /** hashCheckoutRequest() of the request, kept with the idempotency key. */
+  checkoutRequestHash?: string;
   subtotalKopecks: number;
   deliveryKopecks: number;
   totalKopecks: number;
@@ -205,17 +229,58 @@ export class OrderRepository {
     return configuredPrice;
   }
 
+  /** Order created with this key and the hash of its request (NULL before migration 009). */
   async findByCheckoutIdempotencyKey(
     database: DatabaseExecutor,
     idempotencyKey: string,
-  ): Promise<CreatedOrderRow | null> {
-    const result = await database.query<CreatedOrderRow>(
-      `SELECT id, number, status, integration_status, total_kopecks, created_at
+  ): Promise<(CreatedOrderRow & { checkout_request_hash: string | null }) | null> {
+    const result = await database.query<CreatedOrderRow & { checkout_request_hash: string | null }>(
+      `SELECT id, number, status, integration_status, total_kopecks, created_at,
+         checkout_request_hash
        FROM orders
        WHERE checkout_idempotency_key = $1`,
       [idempotencyKey],
     );
     return result.rows[0] ?? null;
+  }
+
+  /**
+   * Counts orders of one contact (phone or case-insensitive email) that still
+   * hold unexpired stock reservations. Must run inside the checkout
+   * transaction: it takes transaction-scoped advisory locks on the contact
+   * keys (in a stable order) so parallel checkouts of one contact are
+   * serialized until commit and cannot exceed the limit together.
+   */
+  async countActiveReservationOrdersForContact(
+    database: DatabaseExecutor,
+    contact: { phone: string; email?: string | null },
+  ): Promise<number> {
+    const email = contact.email?.trim().toLowerCase() || null;
+    const lockKeys = [`checkout-contact:phone:${contact.phone}`];
+    if (email) lockKeys.push(`checkout-contact:email:${email}`);
+    await database.query(
+      `SELECT pg_advisory_xact_lock(contact_lock.key)
+       FROM (
+         SELECT DISTINCT hashtextextended(contact_key, 0) AS key
+         FROM UNNEST($1::text[]) AS contact_key
+         ORDER BY 1
+       ) contact_lock`,
+      [lockKeys],
+    );
+    const result = await database.query<{ count: number | string }>(
+      `SELECT COUNT(*)::integer AS count
+       FROM orders
+       WHERE (orders.customer_phone = $1
+              OR ($2::text IS NOT NULL AND LOWER(orders.customer_email) = $2::text))
+         AND EXISTS (
+           SELECT 1 FROM inventory_reservations
+           WHERE inventory_reservations.order_id = orders.id
+             AND inventory_reservations.status = 'active'
+             AND inventory_reservations.expires_at > NOW()
+         )`,
+      [contact.phone, email],
+    );
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   async lockProductsForCheckout(
@@ -228,6 +293,17 @@ export class OrderRepository {
          products.sku,
          products.name,
          products.is_active,
+         products.kind,
+         products.brand,
+         products.model,
+         COALESCE((SELECT tire_specs.width FROM tire_specs WHERE tire_specs.product_id = products.id), products.width)::integer AS width,
+         COALESCE((SELECT tire_specs.profile FROM tire_specs WHERE tire_specs.product_id = products.id), products.profile)::integer AS profile,
+         COALESCE(
+           (SELECT tire_specs.diameter FROM tire_specs WHERE tire_specs.product_id = products.id),
+           (SELECT wheel_specs.diameter FROM wheel_specs WHERE wheel_specs.product_id = products.id),
+           products.diameter
+         )::integer AS diameter,
+         products.pcd,
          jsonb_build_object('kind', products.kind, 'condition', products.condition,
            'brand', products.brand, 'model', products.model,
            'tire', (SELECT to_jsonb(t) - 'product_id' FROM tire_specs t WHERE t.product_id=products.id),
@@ -262,8 +338,8 @@ export class OrderRepository {
          number, user_id, checkout_idempotency_key, customer_name, customer_email,
          customer_phone, subtotal_kopecks, discount_kopecks, delivery_kopecks,
          total_kopecks, delivery_method, delivery_address, comment,
-         requires_tire_service
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13)
+         requires_tire_service, checkout_request_hash
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id, number, status, integration_status, total_kopecks, created_at`,
       [
         orderNumber,
@@ -279,6 +355,7 @@ export class OrderRepository {
         order.delivery.address ?? null,
         order.comment ?? null,
         order.requiresTireService,
+        order.checkoutRequestHash ?? null,
       ],
     );
     const createdOrder = orderResult.rows[0];
@@ -409,6 +486,14 @@ export class OrderRepository {
       [productId],
     );
     let remainingQuantity = requestedQuantity;
+    const availableQuantity = inventoryResult.rows.reduce(
+      (sum, inventory) => sum + inventory.quantity - inventory.reserved,
+      0,
+    );
+    if (availableQuantity < requestedQuantity) {
+      // Checked before any UPDATE: nothing is reserved for this product.
+      throw new InsufficientStockError(productId, availableQuantity);
+    }
 
     for (const inventory of inventoryResult.rows) {
       if (remainingQuantity === 0) break;
@@ -425,7 +510,7 @@ export class OrderRepository {
     }
 
     if (remainingQuantity > 0) {
-      throw new Error("INSUFFICIENT_STOCK");
+      throw new InsufficientStockError(productId, requestedQuantity - remainingQuantity);
     }
     return allocations;
   }

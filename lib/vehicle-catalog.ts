@@ -124,6 +124,90 @@ export const SUPPLEMENTAL_VEHICLE_MODELS: Record<string, string[]> = {
   DONGFENG: ["580", "Aeolus Shine", "Huge", "Mage", "Shine Max"],
 };
 
+/**
+ * Popular models of global makes sold in Russia. Used when the external
+ * catalog (vPIC) is unavailable and merged with it otherwise, so the
+ * reference list never shows a make without models. Keys are normalized make
+ * names (normalizeVehicleMakeName).
+ */
+export const FALLBACK_GLOBAL_VEHICLE_MODELS: Record<string, string[]> = {
+  TOYOTA: [
+    "Alphard", "Auris", "Avensis", "C-HR", "Camry", "Corolla", "Fortuner",
+    "Highlander", "Hilux", "Land Cruiser", "Land Cruiser Prado", "RAV4",
+    "Venza", "Yaris",
+  ],
+  KIA: [
+    "Carnival", "Ceed", "Cerato", "K5", "Mohave", "Optima", "Picanto", "Rio",
+    "Rio X", "Seltos", "Sorento", "Soul", "Sportage", "Stinger",
+  ],
+  HYUNDAI: [
+    "Accent", "Creta", "Elantra", "Getz", "i30", "ix35", "Palisade",
+    "Santa Fe", "Solaris", "Sonata", "Staria", "Tucson",
+  ],
+  VOLKSWAGEN: [
+    "Amarok", "Caddy", "Golf", "Jetta", "Multivan", "Passat", "Passat CC",
+    "Polo", "Taos", "Teramont", "Tiguan", "Touareg", "Transporter",
+  ],
+  SKODA: ["Fabia", "Kamiq", "Karoq", "Kodiaq", "Octavia", "Rapid", "Superb", "Yeti"],
+  RENAULT: [
+    "Arkana", "Dokker", "Duster", "Fluence", "Kaptur", "Koleos", "Logan",
+    "Megane", "Sandero", "Sandero Stepway",
+  ],
+  NISSAN: [
+    "Almera", "Juke", "Murano", "Navara", "Note", "Pathfinder", "Patrol",
+    "Qashqai", "Teana", "Terrano", "Tiida", "X-Trail",
+  ],
+  MITSUBISHI: [
+    "ASX", "Eclipse Cross", "Galant", "L200", "Lancer", "Outlander", "Pajero",
+    "Pajero Sport",
+  ],
+  MAZDA: ["3", "6", "CX-3", "CX-30", "CX-5", "CX-60", "CX-7", "CX-9"],
+  HONDA: ["Accord", "CR-V", "Civic", "Fit", "HR-V", "Jazz", "Pilot"],
+  FORD: [
+    "EcoSport", "Explorer", "Fiesta", "Focus", "Galaxy", "Kuga", "Mondeo",
+    "Ranger", "S-Max", "Transit",
+  ],
+  CHEVROLET: [
+    "Aveo", "Captiva", "Cobalt", "Cruze", "Lacetti", "Lanos", "Niva", "Spark",
+    "Tahoe", "Trailblazer",
+  ],
+  BMW: [
+    "1 Series", "3 Series", "5 Series", "7 Series", "X1", "X3", "X4", "X5",
+    "X6", "X7",
+  ],
+  "MERCEDES-BENZ": [
+    "A-Class", "C-Class", "CLA", "E-Class", "G-Class", "GLA", "GLC", "GLE",
+    "GLS", "S-Class", "Sprinter", "Vito",
+  ],
+  AUDI: ["A3", "A4", "A5", "A6", "A8", "Q3", "Q5", "Q7", "Q8"],
+  LEXUS: ["ES", "GS", "GX", "IS", "LS", "LX", "NX", "RX", "UX"],
+  SUBARU: ["Forester", "Impreza", "Legacy", "Outback", "Tribeca", "XV"],
+  SUZUKI: ["Grand Vitara", "Jimny", "SX4", "Swift", "Vitara"],
+  VOLVO: ["S60", "S80", "S90", "V60", "XC40", "XC60", "XC70", "XC90"],
+  "LAND ROVER": [
+    "Defender", "Discovery", "Discovery Sport", "Freelander", "Range Rover",
+    "Range Rover Evoque", "Range Rover Sport", "Range Rover Velar",
+  ],
+  OPEL: ["Antara", "Astra", "Corsa", "Insignia", "Mokka", "Vectra", "Zafira"],
+  PEUGEOT: [
+    "2008", "206", "207", "208", "3008", "307", "308", "4008", "408", "5008",
+    "Partner",
+  ],
+  CITROEN: ["Berlingo", "C-Elysee", "C3", "C4", "C4 Picasso", "C5", "C5 Aircross"],
+  INFINITI: ["FX", "G", "Q50", "QX50", "QX56", "QX60", "QX70", "QX80"],
+  PORSCHE: ["911", "Cayenne", "Macan", "Panamera", "Taycan"],
+  JEEP: ["Cherokee", "Compass", "Grand Cherokee", "Renegade", "Wrangler"],
+  CADILLAC: ["CTS", "Escalade", "SRX", "XT5", "XT6"],
+  GENESIS: ["G70", "G80", "G90", "GV70", "GV80"],
+  MINI: ["Clubman", "Cooper", "Countryman"],
+  FIAT: ["500", "Albea", "Doblo", "Ducato", "Punto"],
+  "ALFA ROMEO": ["159", "Giulia", "Stelvio"],
+  SEAT: ["Ateca", "Ibiza", "Leon"],
+  BENTLEY: ["Bentayga", "Continental GT", "Flying Spur"],
+  JAGUAR: ["E-Pace", "F-Pace", "XE", "XF", "XJ"],
+  TESLA: ["Model 3", "Model S", "Model X", "Model Y"],
+};
+
 const FALLBACK_GLOBAL_MAKES = [
   "Toyota",
   "BMW",
@@ -207,10 +291,12 @@ export function sortVehicleModels(models: VehicleModel[]): VehicleModel[] {
 
 export function getSupplementalModelsForMake(makeName: string): VehicleModel[] {
   const normalizedMakeName = normalizeVehicleMakeName(makeName);
-  return (SUPPLEMENTAL_VEHICLE_MODELS[normalizedMakeName] ?? []).map(
-    (modelName) => ({
-      id: `local-${normalizedMakeName}-${modelName}`,
-      name: modelName,
-    }),
-  );
+  const modelNames = new Set([
+    ...(SUPPLEMENTAL_VEHICLE_MODELS[normalizedMakeName] ?? []),
+    ...(FALLBACK_GLOBAL_VEHICLE_MODELS[normalizedMakeName] ?? []),
+  ]);
+  return Array.from(modelNames, (modelName) => ({
+    id: `local-${normalizedMakeName}-${modelName}`,
+    name: modelName,
+  }));
 }

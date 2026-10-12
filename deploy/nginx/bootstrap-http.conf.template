@@ -1,3 +1,5 @@
+server_tokens off;
+
 server {
   listen 80;
   server_name ${SITE_HOST};
@@ -6,11 +8,23 @@ server {
     root /var/www/certbot;
   }
 
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $remote_addr;
+  proxy_set_header CF-Connecting-IP "";
+  proxy_set_header X-Forwarded-Proto http;
+
+  # Background jobs are called inside the app container
+  # (deploy/scripts/run-internal-job.sh); closed from outside, as in the TLS
+  # template (SEC-17).
+  location ^~ /api/internal/ {
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    proxy_pass http://app:3000;
+  }
+
   location / {
     proxy_pass http://app:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto http;
   }
 }

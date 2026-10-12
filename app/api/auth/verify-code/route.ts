@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { isIP } from "node:net";
 import { IdentityValidationError } from "@/lib/auth/identity";
 import { AUTHENTICATION_COOKIE_NAME } from "@/lib/auth/session";
 import {
@@ -9,20 +8,16 @@ import {
 import { applicationLogger } from "@/server/types/common";
 import { ApplicationError, toSafeError } from "@/server/utils/errors";
 import { readJsonRequest } from "@/server/utils/http";
+import { getClientIp } from "@/server/security/client-ip";
+import { requireSameOrigin } from "@/server/security/request-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function requesterAddress(request: Request): string | null {
-  const address =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    null;
-  return address && isIP(address) ? address : null;
-}
-
 export async function POST(request: Request) {
   try {
+    // Login CSRF: a foreign page must not be able to sign the visitor in.
+    requireSameOrigin(request);
     if (!authenticationSessionsAreConfigured()) {
       throw new ApplicationError({
         code: "AUTH_INFRASTRUCTURE_NOT_CONFIGURED",
@@ -69,7 +64,7 @@ export async function POST(request: Request) {
       name: String(payload.name ?? ""),
       personalDataConsent: payload.personalDataConsent === true,
       termsAccepted: payload.termsAccepted === true,
-      requesterAddress: requesterAddress(request),
+      requesterAddress: getClientIp(request),
       userAgent: request.headers.get("user-agent")?.slice(0, 500) ?? null,
     });
     const response = NextResponse.json(

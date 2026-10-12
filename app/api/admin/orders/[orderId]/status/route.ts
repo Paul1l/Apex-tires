@@ -1,57 +1,45 @@
 import { NextResponse } from "next/server";
-import {
-  createApplicationServices,
-  databaseIsConfigured,
-} from "@/server/bootstrap/application-services";
 import { requireUserRole } from "@/server/security/request-auth";
-import { applicationLogger } from "@/server/types/common";
-import { ApplicationError, toSafeError } from "@/server/utils/errors";
+import { createAdminOrderService } from "@/server/services/admin-order-factory";
+import {
+  adminOrderErrorResponse,
+  NO_STORE_HEADERS,
+  readOrderIdParameter,
+  requireOrderStorage,
+  validationFailed,
+} from "@/server/services/admin-order-http";
 import { readJsonRequest } from "@/server/utils/http";
 import { updateOrderStatusSchema } from "@/server/validators/admin-order-schema";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/**
+ * Body: { status, comment?, paymentStatus? }. paymentStatus is accepted only
+ * from the admin role (403 otherwise); the comment is saved with the actor in
+ * the order status history.
+ */
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ orderId: string }> },
 ) {
   try {
-    if (!databaseIsConfigured()) {
-      throw new ApplicationError({
-        code: "ORDER_STORAGE_NOT_CONFIGURED",
-        message: "PostgreSQL-заказы пока не подключены.",
-        statusCode: 503,
-      });
-    }
+    requireOrderStorage();
     const user = await requireUserRole(request, ["manager", "admin"]);
-    const { orderId } = await context.params;
-    if (!/^[0-9a-f-]{36}$/i.test(orderId)) {
-      throw new ApplicationError({
-        code: "INVALID_ORDER_ID",
-        message: "Некорректный идентификатор заказа.",
-        statusCode: 422,
-      });
-    }
+    const orderId = await readOrderIdParameter(context.params);
     const validation = updateOrderStatusSchema.safeParse(
       await readJsonRequest(request, 20_000),
     );
     if (!validation.success) {
-      throw new ApplicationError({
-        code: "VALIDATION_ERROR",
-        message: "Выберите допустимый статус заказа.",
-        statusCode: 422,
-      });
+      throw validationFailed(validation.error, "Выберите допустимый статус заказа.");
     }
-    await createApplicationServices().adminOrderService.updateStatus(
-      user.id,
+    const result = await createAdminOrderService().updateStatus(
+      { id: user.id, role: user.role },
       orderId,
       validation.data,
     );
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE_HEADERS });
   } catch (error) {
-    applicationLogger.error({ error }, "Administrative order status update failed");
-    const safeError = toSafeError(error);
-    return NextResponse.json(safeError.body, { status: safeError.statusCode });
+    return adminOrderErrorResponse(error, "Administrative order status update failed");
   }
 }

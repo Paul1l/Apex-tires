@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { BarChart3, Check, Cookie, ShieldCheck, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useDialogFocus } from "@/components/use-dialog-focus";
 import {
+  ANALYTICS_REVOKED_NOTICE_KEY,
+  clearYandexMetrikaStorage,
   COOKIE_CONSENT_UPDATED_EVENT,
   type CookieConsentPreferences,
   OPEN_COOKIE_SETTINGS_EVENT,
@@ -96,6 +99,9 @@ function YandexMetrika({
   return null;
 }
 
+const ANALYTICS_REVOKED_MESSAGE =
+  "Аналитика отключена: Яндекс Метрика больше не работает, её cookie на этом сайте удалены.";
+
 /**
  * Owns the cookie banner, detailed settings dialog, and analytics consent state.
  */
@@ -105,6 +111,35 @@ export function PrivacyTools() {
   const [consentReadFromBrowser, setConsentReadFromBrowser] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [analyticsSelection, setAnalyticsSelection] = useState(false);
+  const [privacyNotice, setPrivacyNotice] = useState("");
+
+  useEffect(() => {
+    let noticeIsPending = false;
+    try {
+      noticeIsPending = Boolean(
+        window.sessionStorage.getItem(ANALYTICS_REVOKED_NOTICE_KEY),
+      );
+    } catch {
+      // sessionStorage unavailable: nothing to show.
+    }
+    if (!noticeIsPending) return;
+    // Let the live region mount first so that screen readers announce it.
+    const timeoutId = window.setTimeout(() => {
+      try {
+        window.sessionStorage.removeItem(ANALYTICS_REVOKED_NOTICE_KEY);
+      } catch {
+        // Already shown once; nothing else to clean up.
+      }
+      setPrivacyNotice(ANALYTICS_REVOKED_MESSAGE);
+    }, 600);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    if (!privacyNotice) return;
+    const timeoutId = window.setTimeout(() => setPrivacyNotice(""), 8000);
+    return () => window.clearTimeout(timeoutId);
+  }, [privacyNotice]);
 
   useEffect(() => {
     const storedPreferences = readCookieConsentPreferences();
@@ -140,16 +175,59 @@ export function PrivacyTools() {
   }, []);
 
   const persistSelection = useCallback((analyticsAllowed: boolean) => {
+    const analyticsWasAllowed =
+      readCookieConsentPreferences()?.analytics === true;
     const updatedPreferences =
       saveCookieConsentPreferences(analyticsAllowed);
     setPreferences(updatedPreferences);
     setSettingsOpen(false);
+
+    if (analyticsWasAllowed && !analyticsAllowed) {
+      // Consent withdrawn: remove Metrika's cookies and storage. A counter
+      // that already runs on this page cannot be unloaded, so the page is
+      // reloaded without it; the notice is shown after the reload.
+      clearYandexMetrikaStorage();
+      const metrikaIsLoaded =
+        Boolean(window.ym) ||
+        Boolean(document.querySelector("script[data-apex-metrika]"));
+      if (metrikaIsLoaded) {
+        try {
+          window.sessionStorage.setItem(ANALYTICS_REVOKED_NOTICE_KEY, "1");
+        } catch {
+          // The reload still stops the counter; only the notice is lost.
+        }
+        window.location.reload();
+        return;
+      }
+      setPrivacyNotice(ANALYTICS_REVOKED_MESSAGE);
+    }
   }, []);
+
+  const settingsOverlayReference = useRef<HTMLDivElement>(null);
+  useDialogFocus(settingsOpen, settingsOverlayReference, () => {
+    // Before the first choice the dialog must be answered, not dismissed.
+    if (preferences) setSettingsOpen(false);
+  });
 
   if (!consentReadFromBrowser) return null;
 
   return (
     <>
+      <div className="privacy-notice-region" role="status" aria-live="polite" data-dialog-keep-active="">
+        {privacyNotice && (
+          <div className="privacy-notice">
+            <ShieldCheck size={18} aria-hidden="true" />
+            <span>{privacyNotice}</span>
+            <button
+              type="button"
+              onClick={() => setPrivacyNotice("")}
+              aria-label="Скрыть уведомление"
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </div>
       {preferences && (
         <YandexMetrika analyticsAllowed={preferences.analytics} />
       )}
@@ -195,6 +273,7 @@ export function PrivacyTools() {
 
       {settingsOpen && (
         <div
+          ref={settingsOverlayReference}
           className="cookie-settings-overlay"
           role="presentation"
           onMouseDown={(event) => {
@@ -208,6 +287,8 @@ export function PrivacyTools() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="cookie-settings-title"
+            tabIndex={-1}
+            data-autofocus
           >
             <header>
               <div>

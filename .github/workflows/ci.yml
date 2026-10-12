@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "claude/**"
+
+permissions:
+  contents: read
+
+# One run per PR or branch: a newer commit cancels the outdated run.
+# Pushes to main are not cancelled, so every merged commit gets a result.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  WRANGLER_SEND_METRICS: "false"
+
+jobs:
+  checks:
+    name: Lint, typecheck, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      # Disposable database for server/tests/import-job-recovery.test.ts.
+      # Same major version as deploy/docker-compose.production.yml.
+      # TEST-ONLY credentials: the container exists only for this job.
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: apex_wheels_test
+          POSTGRES_USER: apex_ci
+          POSTGRES_PASSWORD: apex_ci_test_only
+        ports:
+          - 5432:5432
+        # TCP check: the init-time server of the image listens only on the
+        # socket, so the container is healthy only once the final server is up.
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U apex_ci -d apex_wheels_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # TEST-ONLY connection string to the service container above, not a secret.
+      TEST_DATABASE_URL: postgresql://apex_ci:apex_ci_test_only@127.0.0.1:5432/apex_wheels_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # Node first: pnpm 11 requires Node >= 22.13, and pnpm/action-setup
+      # installs the npm build of pnpm only when such a Node is on PATH.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # No version input: the action reads "packageManager" from package.json.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Apply migrations to the test database
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          DATABASE_SSL_MODE: disable
+
+      - name: Test
+        run: pnpm test
+
+  build:
+    name: Build (Next.js and Cloudflare worker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Preview build without business data and secrets: in preview
+      # assertProductionBusinessConfig (next.config.ts) does not block the build.
+      NEXT_PUBLIC_DEPLOYMENT_STAGE: preview
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # VDS target (deploy/Dockerfile runs the same command).
+      - name: Build Next.js app
+        run: pnpm build
+
+      # Cloudflare target: OpenNext reruns the build script in standalone
+      # mode, reusing the webpack cache from the previous step.
+      - name: Build Cloudflare worker
+        run: pnpm build:worker
