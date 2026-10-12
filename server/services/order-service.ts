@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { businessConfig, getEnabledDeliveryMethods, type AvailabilityDisplayMode } from "../../config/business";
+import { getManagerNotificationEmail } from "../../lib/site-settings";
 import type { DeliveryMethod } from "../../lib/types";
 import { withTransaction } from "../database/postgres-client";
 import {
@@ -13,6 +14,7 @@ import {
 import { ApplicationError } from "../utils/errors";
 import { formatProductDisplayName } from "../utils/product-title";
 import { hashCheckoutRequest } from "./checkout-request-hash";
+import { readSiteSettings, type SiteSettingsReader } from "./site-settings-store";
 import {
   MAXIMUM_ORDER_PRODUCT_QUANTITY,
   type CreateOrderInput,
@@ -39,11 +41,25 @@ export interface CreateOrderContext {
 export interface OrderServiceDependencies {
   pool: Pool;
   orderRepository: CheckoutOrderRepository;
+  /**
+   * Store settings at order time (admin «Настройки»: delivery methods, tire
+   * service, manager notification address). Default: the store_settings row
+   * read with `pool` on every order; build-time defaults without a row.
+   */
+  readSettings?: SiteSettingsReader;
+  /** Fixed values instead of the saved settings (tests, tools). */
   enabledDeliveryMethods?: readonly DeliveryMethod[];
   tireServiceEnabled?: boolean;
   managerNotificationEmail?: string;
   /** Abuse guard: orders with unexpired stock reservations per phone/email. */
   maximumActiveReservationsPerContact?: number;
+}
+
+/** What checkout takes from the store settings. */
+interface CheckoutSettings {
+  enabledDeliveryMethods: readonly DeliveryMethod[];
+  tireServiceEnabled: boolean;
+  managerNotificationEmail?: string;
 }
 
 const DEFAULT_MAXIMUM_ACTIVE_RESERVATIONS_PER_CONTACT = 3;
@@ -106,42 +122,61 @@ function createInsufficientStockError(
 export class OrderService {
   private readonly pool: Pool;
   private readonly orderRepository: CheckoutOrderRepository;
-  private readonly enabledDeliveryMethods: readonly DeliveryMethod[];
-  private readonly tireServiceEnabled: boolean;
-  private readonly managerNotificationEmail?: string;
+  private readonly readSettings: SiteSettingsReader;
+  private readonly fixedSettings: Partial<CheckoutSettings>;
   private readonly maximumActiveReservationsPerContact: number;
 
   constructor({
     pool,
     orderRepository,
-    enabledDeliveryMethods = getEnabledDeliveryMethods(businessConfig),
-    tireServiceEnabled = businessConfig.services.tireService,
-    managerNotificationEmail =
-      businessConfig.contacts.supportEmail ??
-      businessConfig.contacts.email ??
-      undefined,
+    readSettings = readSiteSettings,
+    enabledDeliveryMethods,
+    tireServiceEnabled,
+    managerNotificationEmail,
     maximumActiveReservationsPerContact = DEFAULT_MAXIMUM_ACTIVE_RESERVATIONS_PER_CONTACT,
   }: OrderServiceDependencies) {
     this.pool = pool;
     this.orderRepository = orderRepository;
-    this.enabledDeliveryMethods = enabledDeliveryMethods;
-    this.tireServiceEnabled = tireServiceEnabled;
-    this.managerNotificationEmail = managerNotificationEmail;
+    this.readSettings = readSettings;
+    this.fixedSettings = { enabledDeliveryMethods, tireServiceEnabled, managerNotificationEmail };
     this.maximumActiveReservationsPerContact = maximumActiveReservationsPerContact;
+  }
+
+  /**
+   * Settings for this order: the values saved in the admin at this moment
+   * (one query), unless all of them are fixed by the constructor.
+   */
+  private async loadCheckoutSettings(): Promise<CheckoutSettings> {
+    const fixed = this.fixedSettings;
+    if (
+      fixed.enabledDeliveryMethods !== undefined &&
+      fixed.tireServiceEnabled !== undefined &&
+      fixed.managerNotificationEmail !== undefined
+    ) {
+      return fixed as CheckoutSettings;
+    }
+    const settings = await this.readSettings(this.pool);
+    return {
+      enabledDeliveryMethods: fixed.enabledDeliveryMethods ?? getEnabledDeliveryMethods(settings),
+      tireServiceEnabled: fixed.tireServiceEnabled ?? settings.services.tireService,
+      managerNotificationEmail:
+        fixed.managerNotificationEmail ?? getManagerNotificationEmail(settings),
+    };
   }
 
   async createOrder(
     input: CreateOrderInput,
     context: CreateOrderContext = {},
   ): Promise<CreatedOrderRow & { duplicate?: true }> {
-    if (!this.enabledDeliveryMethods.includes(input.delivery.method)) {
+    const checkoutSettings = await this.loadCheckoutSettings();
+    if (!checkoutSettings.enabledDeliveryMethods.includes(input.delivery.method)) {
       throw new ApplicationError({
         code: "DELIVERY_METHOD_UNAVAILABLE",
         message: "Выбранный способ получения сейчас недоступен.",
         statusCode: 422,
       });
     }
-    if (input.requiresTireService && !this.tireServiceEnabled) {
+    if (input.requiresTireService && !checkoutSettings.tireServiceEnabled) {
       throw new ApplicationError({
         code: "TIRE_SERVICE_UNAVAILABLE",
         message: "Шиномонтаж пока нельзя добавить к заказу.",
@@ -279,7 +314,7 @@ export class OrderService {
         subtotalKopecks,
         deliveryKopecks,
         totalKopecks: subtotalKopecks + deliveryKopecks,
-        managerNotificationEmail: this.managerNotificationEmail,
+        managerNotificationEmail: checkoutSettings.managerNotificationEmail,
         stockReservations,
       });
     });

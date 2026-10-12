@@ -6,6 +6,7 @@ import { OrderService, type OrderServiceDependencies } from "../services/order-s
 import { hashCheckoutRequest } from "../services/checkout-request-hash.js";
 import { ApplicationError } from "../utils/errors.js";
 import type { CreateOrderInput } from "../validators/order-schemas.js";
+import { getDefaultSiteSettings } from "../../lib/site-settings.js";
 
 const TIRE = "d5d4657d-9992-4b87-8b58-36af33ef5144";
 const WHEEL = "0a8f3a61-7f8e-4a4b-9d42-4f3b7c2e9a10";
@@ -95,6 +96,7 @@ function service(scenario: Scenario) {
       orderRepository,
       enabledDeliveryMethods: ["pickup", "courier"],
       tireServiceEnabled: true,
+      readSettings: async () => getDefaultSiteSettings(),
     }),
   };
 }

@@ -63,3 +63,24 @@ export function revalidateStorefrontProduct(
   }
   return revalidated;
 }
+
+/**
+ * Marks every cached page of the site as stale (`revalidatePath("/",
+ * "layout")`): store settings (contacts, address, hours, delivery, services)
+ * appear in the layout, the catalog, the contacts page, legal documents and
+ * structured data. Same rules as above: only inside a Next.js request; a
+ * failure is logged, never thrown — the pages then update on their regular
+ * interval.
+ */
+export function revalidateWholeSite(
+  reason: string,
+  revalidate: (path: string, type: "layout") => void = revalidatePath,
+): boolean {
+  try {
+    revalidate("/", "layout");
+    return true;
+  } catch (error) {
+    applicationLogger.warn({ error, reason }, "Whole site cache reset failed");
+    return false;
+  }
+}

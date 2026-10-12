@@ -5,6 +5,7 @@ import type { CreatedOrderRow } from "../repositories/order-repository.js";
 import { OrderService, type OrderServiceDependencies } from "../services/order-service.js";
 import { ApplicationError } from "../utils/errors.js";
 import { createOrderSchema, type CreateOrderInput } from "../validators/order-schemas.js";
+import { getDefaultSiteSettings } from "../../lib/site-settings.js";
 
 const productId = "11111111-1111-4111-8111-111111111111";
 const otherProductId = "22222222-2222-4222-8222-222222222222";
@@ -65,6 +66,7 @@ function createService(options: { activeOrders?: number; maximumActiveReservatio
     pool,
     orderRepository,
     enabledDeliveryMethods: ["pickup"],
+    readSettings: async () => getDefaultSiteSettings(),
     maximumActiveReservationsPerContact: options.maximumActiveReservationsPerContact,
   });
   return { service, contacts, createdCount: () => created };

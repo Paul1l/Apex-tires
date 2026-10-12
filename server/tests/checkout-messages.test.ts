@@ -11,6 +11,7 @@ import { OrderService, formatInsufficientStockMessage, type OrderServiceDependen
 import { ApplicationError } from "../utils/errors.js";
 import { validateCreateOrder } from "../validators/order-schemas.js";
 import { formatProductDisplayName } from "../utils/product-title.js";
+import { getDefaultSiteSettings } from "../../lib/site-settings.js";
 
 const productId = "11111111-1111-4111-8111-111111111111";
 
@@ -37,6 +38,7 @@ function service(product: CheckoutProductRow, reserveStock?: OrderServiceDepende
   return new OrderService({
     pool,
     enabledDeliveryMethods: ["pickup"],
+    readSettings: async () => getDefaultSiteSettings(),
     orderRepository: {
       async findByCheckoutIdempotencyKey() { return null; },
       async countActiveReservationOrdersForContact() { return 0; },

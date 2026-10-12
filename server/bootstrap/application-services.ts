@@ -30,7 +30,6 @@ import { AdminOrderService } from "../services/admin-order-service";
 import { YandexPostboxNotificationProvider } from "../integrations/notifications/yandex-postbox-notification-provider";
 import { LocalFitmentProvider } from "../integrations/fitment/local-fitment-provider";
 import { applicationLogger } from "../types/common";
-import { businessConfig } from "../../config/business";
 import { readSecurityLimits } from "../config/security-limits";
 import { reportRuntimeConfigurationOnce } from "../config/runtime-configuration";
 import {
@@ -126,6 +125,8 @@ export function createApplicationServices(): ApplicationServices {
     environment,
     pool,
     synchronizationService,
+    // Delivery methods, tire service and the manager notification address
+    // come from the settings saved in the admin, read with each order.
     orderService: new OrderService({
       pool,
       orderRepository,
@@ -147,13 +148,12 @@ export function createApplicationServices(): ApplicationServices {
       orderRepository,
       logger: applicationLogger,
     }),
+    // Manager notification address: from the settings saved in the admin
+    // («Настройки»), read with each request; build-time defaults without a row.
     fitmentRequestService: new FitmentRequestService(
       pool,
       fitmentRequestRepository,
       notificationOutboxRepository,
-      businessConfig.contacts.supportEmail ??
-        businessConfig.contacts.email ??
-        undefined,
     ),
     catalogService: new CatalogService(pool, productRepository),
     authService: environment.OTP_CODE_PEPPER

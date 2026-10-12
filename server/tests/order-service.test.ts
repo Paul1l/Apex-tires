@@ -10,6 +10,7 @@ import {
   OrderService,
   type OrderServiceDependencies,
 } from "../services/order-service.js";
+import { getDefaultSiteSettings } from "../../lib/site-settings.js";
 
 function createTransactionPool() {
   const database = {
@@ -95,6 +96,7 @@ test("order total is calculated from locked backend prices", async () => {
     pool: pool as unknown as Pool,
     orderRepository,
     enabledDeliveryMethods: ["pickup"],
+    readSettings: async () => getDefaultSiteSettings(),
   });
 
   const order = await service.createOrder({
