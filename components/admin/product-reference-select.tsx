@@ -68,7 +68,14 @@ export function ProductReferenceSelect({
   return (
     <div className={`${styles.field} ${error ? styles.invalid : ""}`}>
       <label htmlFor={id}><span>{label}</span></label>
-      <select id={id} value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+      >
         <option value="">{emptyLabel}</option>
         {items.map((item) => (
           <option key={item.id} value={item.id} disabled={!item.isActive && item.id !== value}>
@@ -76,7 +83,7 @@ export function ProductReferenceSelect({
           </option>
         ))}
       </select>
-      {error && <small className={styles.fieldError}>{error}</small>}
+      {error && <small id={`${id}-error`} className={styles.fieldError}>{error}</small>}
       {!disabled && !creating && (
         <button type="button" className={styles.linkButton} onClick={() => setCreating(true)}>{createLabel}</button>
       )}

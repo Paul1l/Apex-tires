@@ -8,10 +8,8 @@ import {
 } from "@/server/services/admin-catalog-http";
 import { createAdminCatalogServices } from "@/server/services/admin-catalog-services";
 import { readJsonRequest } from "@/server/utils/http";
-import {
-  adminProductListQuerySchema,
-  createProductSchema,
-} from "@/server/validators/admin-product-schema";
+import { parseCreateProductInput } from "@/server/services/admin-catalog-rules";
+import { adminProductListQuerySchema } from "@/server/validators/admin-product-schema";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,7 +37,8 @@ export async function POST(request: Request) {
   try {
     requireCatalogDatabase();
     const actor = await requireUserRole(request, ["manager", "admin"]);
-    const input = createProductSchema.parse(await readJsonRequest(request, ADMIN_CATALOG_JSON_LIMIT_BYTES));
+    // All schema problems and all missing required fields in one answer.
+    const input = parseCreateProductInput(await readJsonRequest(request, ADMIN_CATALOG_JSON_LIMIT_BYTES));
     const product = await createAdminCatalogServices().products.create(actor.id, input);
     revalidateStorefrontProduct("admin-product-created", product);
     return adminJson({ ok: true, product }, 201);

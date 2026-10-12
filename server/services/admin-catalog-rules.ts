@@ -3,8 +3,14 @@ import type {
   AdminProductCardField,
   AdminProductStockRow,
 } from "../../lib/admin/product-types";
+import { missingRequiredFields } from "../../lib/admin/product-rules";
 import { ApplicationError } from "../utils/errors";
-import type { ProductPriceInput, ProductStockInput } from "../validators/admin-product-schema";
+import {
+  createProductSchema,
+  type CreateProductInput,
+  type ProductPriceInput,
+  type ProductStockInput,
+} from "../validators/admin-product-schema";
 
 /**
  * Card fields that the 1C exchange writes for a product with
@@ -109,34 +115,47 @@ export interface FieldIssue {
   message: string;
 }
 
-/** Required fields that depend on the product kind (after merging a change). */
+/** All missing required fields of a merged card (common and kind-specific) at once. */
 export function validateCompleteCard(card: AdminProductCard): FieldIssue[] {
-  const issues: FieldIssue[] = [];
-  const require = (field: AdminProductCardField, message: string) => {
-    if (card[field] === null) issues.push({ field: `card.${field}`, message });
-  };
-  require("brandId", "Выберите бренд.");
-  require("diameter", "Укажите посадочный диаметр.");
-  if (card.kind === "tire") {
-    require("width", "Укажите ширину профиля шины.");
-    require("profile", "Укажите высоту профиля шины.");
-    require("season", "Выберите сезон шины.");
-  } else {
-    require("wheelWidth", "Укажите ширину диска.");
-    require("boltCount", "Укажите количество крепёжных отверстий.");
-    require("pcd", "Укажите PCD (диаметр расположения отверстий).");
-  }
-  return issues;
+  return missingRequiredFields(card as unknown as Record<string, unknown>, card.kind)
+    .map((issue) => ({ field: `card.${issue.field}`, message: issue.message }));
 }
 
-export function throwValidationIssues(issues: FieldIssue[]): void {
-  if (issues.length === 0) return;
-  throw new ApplicationError({
+/**
+ * Parses a create request and reports every problem in one 422: schema issues
+ * (types, lengths, ranges) plus required fields missing from the raw card,
+ * so the editor never learns about missing sizes only after the next save.
+ */
+export function parseCreateProductInput(raw: unknown): CreateProductInput {
+  const result = createProductSchema.safeParse(raw);
+  if (result.success) {
+    throwValidationIssues(validateCompleteCard(normalizeCardForKind(result.data.card)));
+    return result.data;
+  }
+  const issues: FieldIssue[] = result.error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message }));
+  const rawCard = raw !== null && typeof raw === "object" ? Reflect.get(raw, "card") : undefined;
+  if (rawCard !== null && typeof rawCard === "object") {
+    const reported = new Set(issues.map((issue) => issue.field));
+    for (const missing of missingRequiredFields(rawCard as Record<string, unknown>, Reflect.get(rawCard, "kind"))) {
+      const field = `card.${missing.field}`;
+      if (!reported.has(field)) issues.push({ field, message: missing.message });
+    }
+  }
+  throw validationError(issues);
+}
+
+/** 422 with field details, in the same shape as schema errors (toSafeError). */
+export function validationError(issues: FieldIssue[]): ApplicationError {
+  return new ApplicationError({
     code: "VALIDATION_ERROR",
     message: "Проверьте введённые параметры.",
     statusCode: 422,
     details: issues,
   });
+}
+
+export function throwValidationIssues(issues: FieldIssue[]): void {
+  if (issues.length > 0) throw validationError(issues);
 }
 
 export interface SourceChangeSet {

@@ -54,63 +54,69 @@ export function readEnvironment(
 export const DEFAULT_PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_PRODUCT_IMAGE_MAX_COUNT = 10;
 
-const emptyToUndefined = (value: unknown) => (value === "" ? undefined : value);
-
 /**
  * Photo upload settings, read separately from the backend environment: a
  * wrong value here disables photo uploads with a message in the admin
- * instead of stopping the catalog, orders and sign-in.
+ * instead of stopping the catalog, orders and sign-in. Each variable is
+ * checked on its own: a wrong limit stops new uploads only, while files in a
+ * valid UPLOADS_DIR are still served and deleted.
  */
-const uploadEnvironmentSchema = z.object({
-  UPLOADS_DIR: z.preprocess(
-    emptyToUndefined,
-    z
-      .string()
-      .max(1_024)
-      .refine((value) => value.startsWith("/") && !value.includes("\0"), "нужен абсолютный путь")
-      .optional(),
-  ),
-  PRODUCT_IMAGE_MAX_BYTES: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().min(100_000).max(20_000_000).default(DEFAULT_PRODUCT_IMAGE_MAX_BYTES),
-  ),
-  PRODUCT_IMAGE_MAX_COUNT: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().min(1).max(30).default(DEFAULT_PRODUCT_IMAGE_MAX_COUNT),
-  ),
-});
+const uploadVariableSchemas = {
+  UPLOADS_DIR: z
+    .string()
+    .max(1_024)
+    .refine((value) => value.startsWith("/") && !value.includes("\0"), "нужен абсолютный путь"),
+  PRODUCT_IMAGE_MAX_BYTES: z.coerce.number().int().min(100_000).max(20_000_000),
+  PRODUCT_IMAGE_MAX_COUNT: z.coerce.number().int().min(1).max(30),
+} as const;
 
 export interface UploadEnvironment {
-  /** Absolute directory for uploaded files; null — uploads are disabled. */
+  /**
+   * Valid absolute UPLOADS_DIR, or null when it is empty or invalid. Stored
+   * photos are served and deleted whenever it is set.
+   */
   uploadsDirectory: string | null;
   productImageMaxBytes: number;
   productImageMaxCount: number;
-  /** Names the invalid variables (never their values) when the settings are rejected. */
+  /**
+   * Why new uploads are refused although UPLOADS_DIR may be set: names the
+   * invalid variables (never their values). null when the settings are valid.
+   */
   problem: string | null;
+}
+
+/** True when new photos may be uploaded (valid directory and limits). */
+export function uploadsAreEnabled(environment: UploadEnvironment): boolean {
+  return environment.uploadsDirectory !== null && environment.problem === null;
 }
 
 export function readUploadEnvironment(
   source: Record<string, string | undefined> = process.env,
 ): UploadEnvironment {
-  const result = uploadEnvironmentSchema.safeParse({
-    UPLOADS_DIR: source.UPLOADS_DIR,
-    PRODUCT_IMAGE_MAX_BYTES: source.PRODUCT_IMAGE_MAX_BYTES,
-    PRODUCT_IMAGE_MAX_COUNT: source.PRODUCT_IMAGE_MAX_COUNT,
-  });
-  if (!result.success) {
-    const variables = [...new Set(result.error.issues.map((issue) => issue.path.join(".")))].join(", ");
-    return {
-      uploadsDirectory: null,
-      productImageMaxBytes: DEFAULT_PRODUCT_IMAGE_MAX_BYTES,
-      productImageMaxCount: DEFAULT_PRODUCT_IMAGE_MAX_COUNT,
-      problem: `Некорректная настройка загрузки фото: ${variables}`,
-    };
-  }
+  const invalid: string[] = [];
+  const read = <Name extends keyof typeof uploadVariableSchemas>(name: Name) => {
+    const value = source[name];
+    if (value === undefined || value === "") return undefined;
+    const result = uploadVariableSchemas[name].safeParse(value);
+    if (!result.success) {
+      invalid.push(name);
+      return undefined;
+    }
+    return result.data as z.infer<(typeof uploadVariableSchemas)[Name]>;
+  };
+  const uploadsDirectory = read("UPLOADS_DIR") ?? null;
+  const productImageMaxBytes = read("PRODUCT_IMAGE_MAX_BYTES") ?? DEFAULT_PRODUCT_IMAGE_MAX_BYTES;
+  const productImageMaxCount = read("PRODUCT_IMAGE_MAX_COUNT") ?? DEFAULT_PRODUCT_IMAGE_MAX_COUNT;
   return {
-    uploadsDirectory: result.data.UPLOADS_DIR ?? null,
-    productImageMaxBytes: result.data.PRODUCT_IMAGE_MAX_BYTES,
-    productImageMaxCount: result.data.PRODUCT_IMAGE_MAX_COUNT,
-    problem: null,
+    uploadsDirectory,
+    productImageMaxBytes,
+    productImageMaxCount,
+    problem: invalid.length === 0
+      ? null
+      : `Загрузка фото отключена: некорректная настройка ${invalid.join(", ")} на сервере.` +
+        (invalid.includes("UPLOADS_DIR")
+          ? " Загруженные ранее фото не отдаются, пока UPLOADS_DIR не исправлен."
+          : " Загруженные ранее фото продолжают показываться."),
   };
 }
 

@@ -16,13 +16,12 @@ import {
 } from "../validators/admin-product-schema.js";
 import { catalogQuerySchema } from "../validators/catalog-query-schema.js";
 import { productSchema } from "../validators/one-c-schemas.js";
+import { JPEG, PNG } from "./upload-image-fixtures.js";
 
 // Runs when TEST_DATABASE_URL points to a disposable database with all
 // migrations; skipped otherwise. Works under the application role (no DDL).
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
-const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0]);
 
 function card(overrides: Partial<AdminProductCard>): AdminProductCard {
   return {

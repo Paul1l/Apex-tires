@@ -77,7 +77,7 @@ function CsvImportForm({
   return (
     <form className="admin-card csv-import-card" onSubmit={submit}>
       <div className="admin-card-head"><div><p className="eyebrow">CSV</p><h2>{title}</h2></div><Upload /></div>
-      <input type="file" name="file" accept=".csv,text/csv" required />
+      <label><span>{type === "products" ? "CSV-файл товаров" : "CSV-файл применимости"}</span><input type="file" name="file" accept=".csv,text/csv" required /></label>
       {type === "products" && (
         <label><span>Режим</span><select name="mode" defaultValue="incremental"><option value="incremental">Добавить и обновить</option><option value="full">Полная синхронизация CSV</option></select></label>
       )}

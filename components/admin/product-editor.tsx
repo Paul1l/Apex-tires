@@ -3,7 +3,7 @@
 import { ArrowLeft, ChevronRight, ExternalLink, PackageCheck, Save, Warehouse } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { cloneElement, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { AdminApiError, adminApi, errorMessage, type AdminApiIssue } from "@/lib/admin/product-api";
 import {
   changedCardValues,
@@ -17,6 +17,7 @@ import {
   suggestProductName,
   type ProductFormState,
 } from "@/lib/admin/product-form";
+import { missingRequiredFields } from "@/lib/admin/product-rules";
 import type {
   AdminBrand,
   AdminCategory,
@@ -58,23 +59,42 @@ function sortByName<Item extends { name: string }>(items: Item[]): Item[] {
   return [...items].sort((first, second) => first.name.localeCompare(second.name, "ru"));
 }
 
+/** Accessibility attributes a field passes to its control. */
+interface ControlProps {
+  id?: string;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
+}
+
+/**
+ * Labelled control. The error text sits outside the <label> (the accessible
+ * name stays the label alone) and is linked with aria-describedby; an invalid
+ * control gets aria-invalid, which also lets the editor focus it after a save.
+ */
 function Field({
+  id,
   label,
   error,
   wide,
   children,
 }: {
+  id: string;
   label: string;
   error?: string;
   wide?: boolean;
-  children: ReactNode;
+  children: ReactElement<ControlProps>;
 }) {
+  const errorId = `${id}-error`;
   return (
-    <label className={`${wide ? "wide" : ""} ${error ? styles.invalid : ""}`}>
-      <span>{label}</span>
-      {children}
-      {error && <small className={styles.fieldError}>{error}</small>}
-    </label>
+    <div className={`${styles.field} ${wide ? styles.wide : ""} ${error ? styles.invalid : ""}`}>
+      <label htmlFor={id}><span>{label}</span></label>
+      {cloneElement(children, {
+        id,
+        "aria-invalid": error ? true : undefined,
+        "aria-describedby": error ? errorId : undefined,
+      })}
+      {error && <small id={errorId} className={styles.fieldError}>{error}</small>}
+    </div>
   );
 }
 
@@ -96,6 +116,10 @@ export function ProductEditor({ productId, created = false }: { productId: strin
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [conflict, setConflict] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  /** Incremented after a save attempt: focus moves to the first invalid field or the result message. */
+  const [focusRequest, setFocusRequest] = useState(0);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const messageRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -161,6 +185,13 @@ export function ProductEditor({ productId, created = false }: { productId: strin
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  useEffect(() => {
+    if (focusRequest === 0) return;
+    // The save button is disabled while saving, so focus would stay on <body>.
+    const firstInvalid = contentRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]:not(:disabled)');
+    (firstInvalid ?? messageRef.current)?.focus();
+  }, [focusRequest]);
+
   const locked = useMemo(() => new Set(data?.lockedFields ?? []), [data]);
   const stockRows = isNew ? warehouses : data?.stock ?? [];
   const isLocked = (field: string) => locked.has(field);
@@ -168,10 +199,11 @@ export function ProductEditor({ productId, created = false }: { productId: strin
 
   function update<Key extends keyof ProductFormState>(key: Key, value: ProductFormState[Key]) {
     setForm((current) => ({ ...current, [key]: value }));
+    const issueField = key === "price" ? "price.amountKopecks" : key === "oldPrice" ? "price.oldAmountKopecks" : `card.${key}`;
     setIssues((current) => {
-      if (!current[`card.${key}`]) return current;
+      if (!current[issueField]) return current;
       const next = { ...current };
-      delete next[`card.${key}`];
+      delete next[issueField];
       return next;
     });
   }
@@ -198,10 +230,21 @@ export function ProductEditor({ productId, created = false }: { productId: strin
     const { card, errors: cardErrors } = productCardFromForm(form);
     const { price, errors: priceErrors } = productPriceFromForm(form);
     const { stock, errors: stockErrors } = productStockFromForm(form, stockRows);
-    const localErrors = [...cardErrors, ...priceErrors, ...stockErrors.map((error, index) => ({ ...error, field: `stock:${stockRows[index]?.warehouseId ?? ""}` }))];
+    // Every missing required field at once (the server checks the same list).
+    const cardChanged = isNew || (data !== null && Object.keys(changedCardValues(data.card, card)).length > 0);
+    const requiredErrors = cardChanged
+      ? missingRequiredFields(form as unknown as Record<string, unknown>, form.kind).map((missing) => ({ field: `card.${missing.field}`, message: missing.message }))
+      : [];
+    const localErrors = [
+      ...cardErrors,
+      ...requiredErrors.filter((required) => !cardErrors.some((error) => error.field === required.field)),
+      ...priceErrors,
+      ...stockErrors.map((error, index) => ({ ...error, field: `stock:${stockRows[index]?.warehouseId ?? ""}` })),
+    ];
     if (localErrors.length > 0) {
       setIssues(Object.fromEntries(localErrors.map((error) => [error.field, error.message])));
-      setMessage({ tone: "error", text: "Проверьте отмеченные поля." });
+      setMessage({ tone: "error", text: `Проверьте отмеченные поля (${localErrors.length}).` });
+      setFocusRequest((value) => value + 1);
       return;
     }
     let sentStock: Array<{ warehouseId: string; quantity: number }> = [];
@@ -223,7 +266,8 @@ export function ProductEditor({ productId, created = false }: { productId: strin
       if (!isLocked("price")) {
         if (!price && data.price) {
           setIssues({ "price.amountKopecks": "Цену нельзя удалить. Чтобы убрать товар с сайта, снимите «Показывать на сайте»." });
-          setMessage({ tone: "error", text: "Проверьте отмеченные поля." });
+          setMessage({ tone: "error", text: "Проверьте отмеченные поля (1)." });
+          setFocusRequest((value) => value + 1);
           return;
         }
         if (price && (price.amountKopecks !== data.price?.amountKopecks || price.oldAmountKopecks !== data.price?.oldAmountKopecks)) {
@@ -236,6 +280,7 @@ export function ProductEditor({ productId, created = false }: { productId: strin
       }
       if (Object.keys(payload).length === 1) {
         setMessage({ tone: "success", text: "Изменений нет." });
+        setFocusRequest((value) => value + 1);
         return;
       }
       const result = await adminApi<{ changed: boolean }>(`/api/admin/products/${data.id}`, { method: "PATCH", json: payload });
@@ -244,12 +289,16 @@ export function ProductEditor({ productId, created = false }: { productId: strin
         text: result.changed ? "Сохранено. Каталог на сайте обновится при следующем открытии страницы." : "Изменений нет.",
       });
       setReloadKey((value) => value + 1);
+      setFocusRequest((value) => value + 1);
     } catch (error) {
+      const fieldIssues = error instanceof AdminApiError ? error.issues : [];
       if (error instanceof AdminApiError) {
         if (error.code === "PRODUCT_VERSION_CONFLICT") setConflict(true);
-        showIssues(error.issues, sentStock);
+        showIssues(fieldIssues, sentStock);
       }
-      setMessage({ tone: "error", text: errorMessage(error, "Изменения не сохранены.") });
+      const text = errorMessage(error, "Изменения не сохранены.");
+      setMessage({ tone: "error", text: fieldIssues.length > 1 ? `${text} Ошибок: ${fieldIssues.length}.` : text });
+      setFocusRequest((value) => value + 1);
     } finally {
       setSaving(false);
     }
@@ -295,7 +344,7 @@ export function ProductEditor({ productId, created = false }: { productId: strin
   return (
     <main className={styles.page}>
       {header}
-      <div className="admin-content">
+      <div className="admin-content" ref={contentRef}>
         <div className="admin-page-intro">
           <div>
             <p className="eyebrow">Каталог</p>
@@ -349,13 +398,13 @@ export function ProductEditor({ productId, created = false }: { productId: strin
                       <input value={isTire ? "Шина" : "Диск"} aria-labelledby="product-kind-label" disabled readOnly />
                     )}
                   </div>
-                  <Field label="SKU" error={fieldError("sku")}>
+                  <Field id="product-sku" label="SKU" error={fieldError("sku")}>
                     <input value={form.sku} maxLength={100} disabled={isLocked("sku")} onChange={(event) => update("sku", event.target.value)} required />
                   </Field>
-                  <Field label="Артикул производителя" error={fieldError("article")}>
+                  <Field id="product-article" label="Артикул производителя" error={fieldError("article")}>
                     <input value={form.article} maxLength={100} disabled={isLocked("article")} onChange={(event) => update("article", event.target.value)} />
                   </Field>
-                  <Field label="Страна производства" error={fieldError("country")}>
+                  <Field id="product-country" label="Страна производства" error={fieldError("country")}>
                     <input value={form.country} maxLength={100} disabled={isLocked("country")} onChange={(event) => update("country", event.target.value)} />
                   </Field>
                   <ProductReferenceSelect
@@ -369,7 +418,7 @@ export function ProductEditor({ productId, created = false }: { productId: strin
                     emptyLabel={data?.brandName && !form.brandId ? `Не выбран (сейчас «${data.brandName}»)` : "Выберите бренд"}
                     createLabel="+ Новый бренд"
                   />
-                  <Field label="Модель" error={fieldError("model")}>
+                  <Field id="product-model" label="Модель" error={fieldError("model")}>
                     <input value={form.model} maxLength={160} disabled={isLocked("model")} onChange={(event) => update("model", event.target.value)} required />
                   </Field>
                   <ProductReferenceSelect
@@ -383,13 +432,13 @@ export function ProductEditor({ productId, created = false }: { productId: strin
                     emptyLabel={categoryIsTextOnly ? `Не выбрана (сейчас «${data?.categoryName}»)` : "Без категории"}
                     createLabel="+ Новая категория"
                   />
-                  <Field label="Показывать на сайте" error={fieldError("isActive")}>
+                  <Field id="product-isActive" label="Показывать на сайте" error={fieldError("isActive")}>
                     <select value={form.isActive ? "true" : "false"} disabled={isLocked("isActive")} onChange={(event) => update("isActive", event.target.value === "true")}>
                       <option value="true">Да — товар в каталоге</option>
                       <option value="false">Нет — скрыт</option>
                     </select>
                   </Field>
-                  <Field label="Название (на странице товара)" error={fieldError("name")} wide>
+                  <Field id="product-name" label="Название (на странице товара)" error={fieldError("name")} wide>
                     <input value={form.name} maxLength={300} disabled={isLocked("name")} onChange={(event) => update("name", event.target.value)} required />
                   </Field>
                 </div>
@@ -401,8 +450,17 @@ export function ProductEditor({ productId, created = false }: { productId: strin
                 <div className="admin-form-grid">
                   <div className={`${styles.field} ${styles.wide} ${fieldError("description") ? styles.invalid : ""}`}>
                     <label htmlFor="product-description"><span>Описание</span></label>
-                    <textarea id="product-description" className={styles.textarea} value={form.description} maxLength={20000} disabled={isLocked("description")} onChange={(event) => update("description", event.target.value)} />
-                    {fieldError("description") && <small className={styles.fieldError}>{fieldError("description")}</small>}
+                    <textarea
+                      id="product-description"
+                      className={styles.textarea}
+                      value={form.description}
+                      maxLength={20000}
+                      disabled={isLocked("description")}
+                      aria-invalid={fieldError("description") ? true : undefined}
+                      aria-describedby={fieldError("description") ? "product-description-error" : undefined}
+                      onChange={(event) => update("description", event.target.value)}
+                    />
+                    {fieldError("description") && <small id="product-description-error" className={styles.fieldError}>{fieldError("description")}</small>}
                   </div>
                 </div>
               </div>
@@ -414,17 +472,17 @@ export function ProductEditor({ productId, created = false }: { productId: strin
                 {isTire ? (
                   <>
                     <div className="admin-form-grid">
-                      <Field label="Ширина профиля, мм" error={fieldError("width")}><input inputMode="numeric" value={form.width} disabled={isLocked("width")} onChange={(event) => update("width", event.target.value)} placeholder="205" /></Field>
-                      <Field label="Высота профиля, %" error={fieldError("profile")}><input inputMode="numeric" value={form.profile} disabled={isLocked("profile")} onChange={(event) => update("profile", event.target.value)} placeholder="55" /></Field>
-                      <Field label="Посадочный диаметр, R" error={fieldError("diameter")}><input inputMode="numeric" value={form.diameter} disabled={isLocked("diameter")} onChange={(event) => update("diameter", event.target.value)} placeholder="16" /></Field>
-                      <Field label="Сезон" error={fieldError("season")}>
+                      <Field id="product-width" label="Ширина профиля, мм" error={fieldError("width")}><input inputMode="numeric" value={form.width} disabled={isLocked("width")} onChange={(event) => update("width", event.target.value)} placeholder="205" /></Field>
+                      <Field id="product-profile" label="Высота профиля, %" error={fieldError("profile")}><input inputMode="numeric" value={form.profile} disabled={isLocked("profile")} onChange={(event) => update("profile", event.target.value)} placeholder="55" /></Field>
+                      <Field id="product-diameter" label="Посадочный диаметр, R" error={fieldError("diameter")}><input inputMode="numeric" value={form.diameter} disabled={isLocked("diameter")} onChange={(event) => update("diameter", event.target.value)} placeholder="16" /></Field>
+                      <Field id="product-season" label="Сезон" error={fieldError("season")}>
                         <select value={form.season} disabled={isLocked("season")} onChange={(event) => update("season", event.target.value as ProductFormState["season"])}>
                           <option value="">Выберите сезон</option>
                           {seasonOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
                       </Field>
-                      <Field label="Индекс нагрузки" error={fieldError("loadIndex")}><input value={form.loadIndex} maxLength={20} disabled={isLocked("loadIndex")} onChange={(event) => update("loadIndex", event.target.value)} placeholder="94" /></Field>
-                      <Field label="Индекс скорости" error={fieldError("speedIndex")}><input value={form.speedIndex} maxLength={20} disabled={isLocked("speedIndex")} onChange={(event) => update("speedIndex", event.target.value)} placeholder="T" /></Field>
+                      <Field id="product-loadIndex" label="Индекс нагрузки" error={fieldError("loadIndex")}><input value={form.loadIndex} maxLength={20} disabled={isLocked("loadIndex")} onChange={(event) => update("loadIndex", event.target.value)} placeholder="94" /></Field>
+                      <Field id="product-speedIndex" label="Индекс скорости" error={fieldError("speedIndex")}><input value={form.speedIndex} maxLength={20} disabled={isLocked("speedIndex")} onChange={(event) => update("speedIndex", event.target.value)} placeholder="T" /></Field>
                     </div>
                     <div className="admin-toggle-row">
                       <label><input type="checkbox" checked={form.studded} disabled={isLocked("studded")} onChange={(event) => update("studded", event.target.checked)} /> Шипованная</label>
@@ -434,19 +492,19 @@ export function ProductEditor({ productId, created = false }: { productId: strin
                   </>
                 ) : (
                   <div className="admin-form-grid">
-                    <Field label="Посадочный диаметр, R" error={fieldError("diameter")}><input inputMode="numeric" value={form.diameter} disabled={isLocked("diameter")} onChange={(event) => update("diameter", event.target.value)} placeholder="18" /></Field>
-                    <Field label="Ширина диска, J" error={fieldError("wheelWidth")}><input inputMode="decimal" value={form.wheelWidth} disabled={isLocked("wheelWidth")} onChange={(event) => update("wheelWidth", event.target.value)} placeholder="8" /></Field>
-                    <Field label="Количество отверстий" error={fieldError("boltCount")}><input inputMode="numeric" value={form.boltCount} disabled={isLocked("boltCount")} onChange={(event) => update("boltCount", event.target.value)} placeholder="5" /></Field>
-                    <Field label="PCD, мм" error={fieldError("pcd")}><input inputMode="decimal" value={form.pcd} disabled={isLocked("pcd")} onChange={(event) => update("pcd", event.target.value)} placeholder="112" /></Field>
-                    <Field label="Вылет ET, мм" error={fieldError("offset")}><input inputMode="numeric" value={form.offset} disabled={isLocked("offset")} onChange={(event) => update("offset", event.target.value)} placeholder="35" /></Field>
-                    <Field label="Центральное отверстие DIA, мм" error={fieldError("centerBore")}><input inputMode="decimal" value={form.centerBore} disabled={isLocked("centerBore")} onChange={(event) => update("centerBore", event.target.value)} placeholder="66,6" /></Field>
-                    <Field label="Тип диска" error={fieldError("wheelType")}>
+                    <Field id="product-diameter" label="Посадочный диаметр, R" error={fieldError("diameter")}><input inputMode="numeric" value={form.diameter} disabled={isLocked("diameter")} onChange={(event) => update("diameter", event.target.value)} placeholder="18" /></Field>
+                    <Field id="product-wheelWidth" label="Ширина диска, J" error={fieldError("wheelWidth")}><input inputMode="decimal" value={form.wheelWidth} disabled={isLocked("wheelWidth")} onChange={(event) => update("wheelWidth", event.target.value)} placeholder="8" /></Field>
+                    <Field id="product-boltCount" label="Количество отверстий" error={fieldError("boltCount")}><input inputMode="numeric" value={form.boltCount} disabled={isLocked("boltCount")} onChange={(event) => update("boltCount", event.target.value)} placeholder="5" /></Field>
+                    <Field id="product-pcd" label="PCD, мм" error={fieldError("pcd")}><input inputMode="decimal" value={form.pcd} disabled={isLocked("pcd")} onChange={(event) => update("pcd", event.target.value)} placeholder="112" /></Field>
+                    <Field id="product-offset" label="Вылет ET, мм" error={fieldError("offset")}><input inputMode="numeric" value={form.offset} disabled={isLocked("offset")} onChange={(event) => update("offset", event.target.value)} placeholder="35" /></Field>
+                    <Field id="product-centerBore" label="Центральное отверстие DIA, мм" error={fieldError("centerBore")}><input inputMode="decimal" value={form.centerBore} disabled={isLocked("centerBore")} onChange={(event) => update("centerBore", event.target.value)} placeholder="66,6" /></Field>
+                    <Field id="product-wheelType" label="Тип диска" error={fieldError("wheelType")}>
                       <select value={form.wheelType} disabled={isLocked("wheelType")} onChange={(event) => update("wheelType", event.target.value as ProductFormState["wheelType"])}>
                         <option value="">Не указан</option>
                         {wheelTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </Field>
-                    <Field label="Цвет" error={fieldError("color")}><input value={form.color} maxLength={100} disabled={isLocked("color")} onChange={(event) => update("color", event.target.value)} placeholder="серебристый" /></Field>
+                    <Field id="product-color" label="Цвет" error={fieldError("color")}><input value={form.color} maxLength={100} disabled={isLocked("color")} onChange={(event) => update("color", event.target.value)} placeholder="серебристый" /></Field>
                   </div>
                 )}
                 <p className={styles.hint}>Эти поля используются фильтрами каталога и подбором по автомобилю.</p>
@@ -459,10 +517,10 @@ export function ProductEditor({ productId, created = false }: { productId: strin
               <div className="admin-card-head"><div><p className="eyebrow">Цена</p><h2>Розничная цена{data?.price && <small> сейчас {formatKopecks(data.price.amountKopecks)}</small>}</h2></div></div>
               <div className={styles.sectionBody}>
                 <div className="admin-form-grid">
-                  <Field label="Цена, ₽" error={issues["price.amountKopecks"]}>
+                  <Field id="product-price" label="Цена, ₽" error={issues["price.amountKopecks"]}>
                     <input inputMode="decimal" value={form.price} disabled={isLocked("price")} onChange={(event) => update("price", event.target.value)} placeholder="12 990" />
                   </Field>
-                  <Field label="Старая цена, ₽" error={issues["price.oldAmountKopecks"]}>
+                  <Field id="product-oldPrice" label="Старая цена, ₽" error={issues["price.oldAmountKopecks"]}>
                     <input inputMode="decimal" value={form.oldPrice} disabled={isLocked("price")} onChange={(event) => update("oldPrice", event.target.value)} placeholder="не указана" />
                   </Field>
                 </div>
@@ -491,11 +549,13 @@ export function ProductEditor({ productId, created = false }: { productId: strin
                                   className={`${styles.stockInput} ${error ? styles.invalidInput : ""}`}
                                   inputMode="numeric"
                                   aria-label={`Остаток на складе ${row.warehouseName}`}
+                                  aria-invalid={error ? true : undefined}
+                                  aria-describedby={error ? `stock-${row.warehouseId}-error` : undefined}
                                   value={form.stock[row.warehouseId] ?? ""}
                                   disabled={isLocked("stock")}
                                   onChange={(event) => setForm((current) => ({ ...current, stock: { ...current.stock, [row.warehouseId]: event.target.value } }))}
                                 />
-                                {error && <small className={styles.fieldError}>{error}</small>}
+                                {error && <small id={`stock-${row.warehouseId}-error`} className={styles.fieldError}>{error}</small>}
                               </td>
                               <td>{row.reserved}</td>
                               <td>{Number.isFinite(typed) ? Math.max(0, typed - row.reserved) : "—"}</td>
@@ -514,7 +574,7 @@ export function ProductEditor({ productId, created = false }: { productId: strin
 
         <div className={styles.saveBar}>
           {message && (
-            <p className={message.tone === "error" ? styles.error : styles.success} role={message.tone === "error" ? "alert" : "status"}>
+            <p ref={messageRef} tabIndex={-1} className={message.tone === "error" ? styles.error : styles.success} role={message.tone === "error" ? "alert" : "status"}>
               {message.text}
             </p>
           )}

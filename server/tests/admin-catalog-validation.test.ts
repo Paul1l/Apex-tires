@@ -10,8 +10,10 @@ import {
   productPriceFromForm,
   productStockFromForm,
 } from "../../lib/admin/product-form.js";
+import { missingRequiredFields } from "../../lib/admin/product-rules.js";
 import {
   ONE_C_OWNED_CARD_FIELDS,
+  parseCreateProductInput,
   assertSourceAllowsChanges,
   changedCardFields,
   formatWheelPcd,
@@ -234,4 +236,43 @@ test("admin list query: bounded page size, defaults to active products", () => {
 test("brand slug matches the 1C/CSV import formula, so imports reuse admin-created brands", () => {
   assert.match(brandSlug("Nordman"), /^brand-[0-9a-f]{16}$/);
   assert.equal(brandSlug("NORDMAN"), brandSlug("nordman"));
+});
+
+test("QA-30: every missing required field is reported in one answer (schema issues merged with completeness)", () => {
+  const raw = {
+    card: tireCard({ sku: "", name: " ", model: "", brandId: null, diameter: null, width: null, profile: null, season: null }),
+    price: { amountKopecks: 0, oldAmountKopecks: null },
+  };
+  assert.throws(() => parseCreateProductInput(raw), (error: Error & { code?: string; statusCode?: number; details?: Array<{ field: string }> }) => {
+    const fields = new Set(error.details?.map((detail) => detail.field));
+    for (const field of ["card.sku", "card.name", "card.model", "card.brandId", "card.diameter", "card.width", "card.profile", "card.season", "price.amountKopecks"]) {
+      assert.ok(fields.has(field), field);
+    }
+    assert.equal(error.details?.length, fields.size, "each field once");
+    return error.code === "VALIDATION_ERROR" && error.statusCode === 422;
+  });
+  const wheel = { card: { ...wheelCard({ wheelWidth: null, boltCount: null, pcd: null }), sku: "W", name: "Диск", diameter: "R18" } };
+  assert.throws(() => parseCreateProductInput(wheel), (error: Error & { details?: Array<{ field: string }> }) => {
+    const fields = error.details?.map((detail) => detail.field).sort();
+    assert.deepEqual(fields, ["card.boltCount", "card.diameter", "card.pcd", "card.wheelWidth"].sort());
+    return true;
+  });
+  // A card that passes the schema still gets all completeness issues together.
+  assert.throws(() => parseCreateProductInput({ card: tireCard({ brandId: null, width: null, season: null }) }), (error: Error & { details?: Array<{ field: string }> }) => {
+    assert.deepEqual(error.details?.map((detail) => detail.field), ["card.brandId", "card.width", "card.season"]);
+    return true;
+  });
+  assert.equal(parseCreateProductInput({ card: tireCard() }).card.sku, "T21B-TIRE-1");
+});
+
+test("QA-30: the editor checks the same required fields before sending", () => {
+  assert.deepEqual(missingRequiredFields(emptyProductForm("tire") as unknown as Record<string, unknown>, "tire").map((item) => item.field), [
+    "sku", "name", "brandId", "model", "diameter", "width", "profile", "season",
+  ]);
+  assert.deepEqual(missingRequiredFields(emptyProductForm("wheel") as unknown as Record<string, unknown>, "wheel").map((item) => item.field), [
+    "sku", "name", "brandId", "model", "diameter", "wheelWidth", "boltCount", "pcd",
+  ]);
+  const filled = { ...emptyProductForm("tire"), sku: "S", name: "N", brandId: BRAND_ID, model: "M", diameter: "16", width: "205", profile: "55", season: "winter" as const };
+  assert.deepEqual(missingRequiredFields(filled as unknown as Record<string, unknown>, "tire"), []);
+  assert.deepEqual(validateCompleteCard(tireCard({ sku: "" })).map((issue) => issue.field), ["card.sku"]);
 });

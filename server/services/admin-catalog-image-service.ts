@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import type { AdminProductImage } from "../../lib/admin/product-types";
-import type { UploadEnvironment } from "../config/environment";
+import { uploadsAreEnabled, type UploadEnvironment } from "../config/environment";
 import { withTransaction } from "../database/postgres-client";
 import type { StoredImageRow } from "../repositories/admin-catalog-product-repository";
 import { createImageStorage, type ImageStorage, type SavedImage } from "../storage/image-storage";
@@ -56,7 +56,8 @@ export class AdminCatalogImageService {
   /** Configured storage and limits; throws UPLOADS_NOT_CONFIGURED when uploads are off. */
   async requireUploads(): Promise<{ storage: ImageStorage; environment: UploadEnvironment }> {
     const environment = this.dependencies.uploadEnvironment();
-    const storage = await this.createStorage(environment);
+    // A wrong limit stops new uploads; serving and deleting stored files go on.
+    const storage = uploadsAreEnabled(environment) ? await this.createStorage(environment) : null;
     if (!storage) throw uploadsNotConfigured(environment);
     return { storage, environment };
   }
