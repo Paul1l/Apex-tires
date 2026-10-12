@@ -46,4 +46,7 @@ gzip -t "$partial_file"
 mv "$partial_file" "$backup_file"
 find "$backup_directory" -type f -name 'uploads_*.tar.gz' \
   -mtime "+$retention_days" -delete
+# Leftovers of runs killed with SIGKILL (no trap runs then), older than a day.
+find "$backup_directory" -type f -name 'uploads_*.tar.gz.partial' \
+  -mmin +1440 -delete
 printf 'Backup created: %s\n' "$backup_file"

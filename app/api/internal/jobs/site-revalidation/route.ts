@@ -17,7 +17,10 @@ export async function POST(request: Request) {
     !process.env.INTERNAL_JOB_SECRET ||
     !requestHasValidApiKey(request, process.env.INTERNAL_JOB_SECRET, "X-Job-Key")
   ) {
-    return NextResponse.json({ ok: false, message: "Неверный ключ задания." }, { status: 401 });
+    return NextResponse.json(
+      { ok: false, message: "Неверный ключ задания." },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
+    );
   }
   const revalidated = revalidateWholeSite("internal-job");
   return NextResponse.json(

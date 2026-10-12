@@ -37,5 +37,7 @@ test("the whole-site cache reset job requires the job key", async () => {
   assert.equal((await POST(request("anything"))).status, 401);
   environment.INTERNAL_JOB_SECRET = "j".repeat(48);
   assert.equal((await POST(request())).status, 401);
-  assert.equal((await POST(request("wrong".repeat(10)))).status, 401);
+  const refused = await POST(request("wrong".repeat(10)));
+  assert.equal(refused.status, 401);
+  assert.equal(refused.headers.get("cache-control"), "no-store");
 });

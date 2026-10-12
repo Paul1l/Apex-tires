@@ -130,3 +130,20 @@ test("phones and single-line fields reject tabs, line breaks, VT and FF (QA-41)"
   valid.contacts.additionalPhones = ["8 913 123 45 67"];
   assert.equal(siteSettingsSchema.safeParse(valid).success, true);
 });
+
+test("C1 controls and Unicode line separators are rejected everywhere (QA-45)", () => {
+  for (const character of ["\u0085", "\u009b", " ", " "]) {
+    for (const [path, mutate] of [
+      ["location.address", (input: ReturnType<typeof getDefaultSiteSettings>) => { input.location.address = `Барнаул,${character}пр. Ленина, 100`; }],
+      ["workingHours", (input: ReturnType<typeof getDefaultSiteSettings>) => { input.workingHours = `Пн–Пт${character}9–19`; }],
+      ["services.other.0", (input: ReturnType<typeof getDefaultSiteSettings>) => { input.services.other = [`Правка${character}дисков`]; }],
+      ["delivery.pickup.rules", (input: ReturnType<typeof getDefaultSiteSettings>) => { input.delivery.pickup.rules = `Строка${character}строка`; }],
+    ] as const) {
+      const input = structuredClone(getDefaultSiteSettings());
+      mutate(input);
+      const result = siteSettingsSchema.safeParse(input);
+      assert.equal(result.success, false, `${path} ${character.codePointAt(0)}`);
+      if (!result.success) assert.equal(result.error.issues[0].path.join("."), path);
+    }
+  }
+});

@@ -9,7 +9,9 @@ import type { SiteSettings } from "../../lib/site-settings";
  * PostgreSQL JSONB, QA-37); line breaks and tabs are allowed only in the
  * multi-line delivery rules (QA-41).
  */
-const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+// C0 (except tab and line breaks), DEL, C1 (NEL and others) and the Unicode
+// line/paragraph separators, invisible in shop texts (QA-45).
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u2028\u2029]/;
 const LINE_BREAKS_AND_TABS = /[\t\r\n]/;
 const noControlCharacters = (label: string) =>
   [(value: string) => !CONTROL_CHARACTERS.test(value), `${label}: недопустимые служебные символы.`] as const;
