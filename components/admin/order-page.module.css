@@ -1,0 +1,66 @@
+/* Standalone admin order pages: same surface as .admin-shell, without the sidebar. */
+.page {
+  min-height: 100vh;
+  background: #eef0ed;
+  color: #20231f;
+  font-family: var(--font-body);
+}
+
+.topbarStart {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  border: 1px solid #dce0da;
+  border-radius: 4px;
+  background: #fff;
+  color: #2e312d;
+  padding: 0 12px;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.backLink:hover {
+  border-color: #b9bdb6;
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.message {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.message h1 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.message p {
+  max-width: 460px;
+  margin: 0;
+  color: #6f746d;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .topbarStart {
+    gap: 10px;
+  }
+}
