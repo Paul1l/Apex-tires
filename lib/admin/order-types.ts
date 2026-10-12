@@ -138,6 +138,8 @@ export interface AdminOrderStatusUpdateResponse {
   status: string;
   previousStatus: string;
   notificationQueued: boolean;
+  /** Same status without a comment: nothing was changed or logged. */
+  unchanged?: boolean;
 }
 
 export interface AdminOrderCommentResponse {

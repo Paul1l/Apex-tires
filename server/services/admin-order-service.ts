@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type {
   AdminOrderComment,
   AdminOrderDetails,
@@ -12,6 +12,7 @@ import type { AdminAuditRepository } from "../repositories/admin-audit-repositor
 import {
   AdminOrderRepository,
   type AdminOrderReservationRow,
+  type LockedOrderRow,
 } from "../repositories/admin-order-repository";
 import type { UserRole } from "../repositories/auth-repository";
 import type { NotificationOutboxRepository } from "../repositories/notification-outbox-repository";
@@ -67,6 +68,8 @@ export interface OrderStatusUpdateResult {
   status: string;
   previousStatus: string;
   notificationQueued: boolean;
+  /** True when the order already had this status (and payment status): nothing was written. */
+  unchanged: boolean;
 }
 
 const MAXIMUM_ERROR_SUMMARY_LENGTH = 300;
@@ -295,6 +298,9 @@ export class AdminOrderService {
    * (checked here for a clear message and again by the trigger of migration
    * 006, which also releases or consumes the holds). The actor and optional
    * comment go into order_status_history through the trigger of migration 012.
+   * The current status again: 409 with a comment, otherwise a no-op
+   * (`unchanged: true`, nothing written) unless an admin sends another
+   * payment status.
    */
   async updateStatus(
     actor: AdminOrderActor,
@@ -309,13 +315,29 @@ export class AdminOrderService {
         const order = await this.adminOrderRepository.lockOrder(database, orderId);
         if (!order) throw orderNotFound();
         const statusChanged = order.status !== input.status;
-        if (!statusChanged && input.comment) {
-          throw new ApplicationError({
-            code: "ORDER_STATUS_UNCHANGED",
-            message:
-              "Заказ уже в этом статусе. Комментарий без смены статуса добавьте в блоке «Комментарии сотрудников».",
-            statusCode: 409,
-          });
+        if (!statusChanged) {
+          if (input.comment) {
+            throw new ApplicationError({
+              code: "ORDER_STATUS_UNCHANGED",
+              message:
+                "Заказ уже в этом статусе. Комментарий без смены статуса добавьте в блоке «Комментарии сотрудников».",
+              statusCode: 409,
+            });
+          }
+          // Repeat of the current status (a stale list, a double click): nothing
+          // to change, so no UPDATE, no history row and no audit entry. Only a
+          // different payment status (admin) is still applied.
+          const paymentChanged =
+            input.paymentStatus !== undefined && input.paymentStatus !== order.payment_status;
+          if (paymentChanged) {
+            await this.changePaymentStatus(database, actor, order, input.paymentStatus!);
+          }
+          return {
+            status: order.status,
+            previousStatus: order.status,
+            notificationQueued: false,
+            unchanged: !paymentChanged,
+          };
         }
         if (
           !STATUSES_ALLOWED_WITH_EXPIRED_RESERVATION.includes(input.status) &&
@@ -364,7 +386,12 @@ export class AdminOrderService {
             notificationQueued = true;
           }
         }
-        return { status: input.status, previousStatus: order.status, notificationQueued };
+        return {
+          status: input.status,
+          previousStatus: order.status,
+          notificationQueued,
+          unchanged: false,
+        };
       });
     } catch (error) {
       if (isReservationTriggerError(error)) throw reservationExpired();
@@ -385,19 +412,29 @@ export class AdminOrderService {
       if (order.payment_status === input.paymentStatus) {
         return { paymentStatus: order.payment_status, changed: false };
       }
-      await this.adminOrderRepository.updatePaymentStatus(database, orderId, input.paymentStatus);
-      await this.auditRepository.record(database, {
-        actorUserId: actor.id,
-        action: "order.payment_status_updated",
-        entityType: "order",
-        entityId: orderId,
-        details: {
-          orderId,
-          previousPaymentStatus: order.payment_status,
-          paymentStatus: input.paymentStatus,
-        },
-      });
+      await this.changePaymentStatus(database, actor, order, input.paymentStatus);
       return { paymentStatus: input.paymentStatus, changed: true };
+    });
+  }
+
+  /** Writes a different payment status of a locked order and its audit entry. */
+  private async changePaymentStatus(
+    database: PoolClient,
+    actor: AdminOrderActor,
+    order: LockedOrderRow,
+    paymentStatus: string,
+  ): Promise<void> {
+    await this.adminOrderRepository.updatePaymentStatus(database, order.id, paymentStatus);
+    await this.auditRepository.record(database, {
+      actorUserId: actor.id,
+      action: "order.payment_status_updated",
+      entityType: "order",
+      entityId: order.id,
+      details: {
+        orderId: order.id,
+        previousPaymentStatus: order.payment_status,
+        paymentStatus,
+      },
     });
   }
 

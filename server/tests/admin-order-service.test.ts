@@ -129,7 +129,7 @@ test("status change records actor and comment for the history trigger, then audi
     status: "confirmed",
     comment: "Наличие подтверждено, позвонить +7 913 000-00-00",
   });
-  assert.deepEqual(result, { status: "confirmed", previousStatus: "new", notificationQueued: false });
+  assert.deepEqual(result, { status: "confirmed", previousStatus: "new", notificationQueued: false, unchanged: false });
   assert.deepEqual(harness.statusContexts, [
     { actorUserId: MANAGER.id, comment: "Наличие подтверждено, позвонить +7 913 000-00-00" },
   ]);
@@ -207,10 +207,46 @@ test("a comment without a status change is refused instead of being lost", async
   const harness = createHarness();
   await rejectsWith(harness.service.updateStatus(MANAGER, ORDER_ID, { status: "new", comment: "текст" }), "ORDER_STATUS_UNCHANGED", 409);
   assert.ok(!harness.log.includes("updateStatus"));
-  // Without a comment the old behaviour stays (idempotent repeat).
-  const repeat = createHarness();
-  await repeat.service.updateStatus(MANAGER, ORDER_ID, { status: "new" });
-  assert.ok(repeat.log.includes("updateStatus"));
+  assert.deepEqual(harness.audits, []);
+});
+
+test("QA-32: the current status again without a comment is a no-op: no UPDATE, no history context, no audit", async () => {
+  const repeat = createHarness({ notifications: true });
+  const result = await repeat.service.updateStatus(MANAGER, ORDER_ID, { status: "new" });
+  assert.deepEqual(result, { status: "new", previousStatus: "new", notificationQueued: false, unchanged: true });
+  const steps = repeat.log.filter((step) => !/^(BEGIN|COMMIT|ROLLBACK)$/.test(step));
+  assert.deepEqual(steps, ["lockOrder"]);
+  assert.deepEqual(repeat.statusContexts, []);
+  assert.deepEqual(repeat.audits, []);
+  assert.deepEqual(repeat.enqueued, []);
+
+  // Same for an admin repeating both the status and the current payment status.
+  const samePayment = createHarness();
+  const samePaymentResult = await samePayment.service.updateStatus(ADMIN, ORDER_ID, { status: "new", paymentStatus: "pending" });
+  assert.equal(samePaymentResult.unchanged, true);
+  assert.deepEqual(samePayment.audits, []);
+  assert.ok(!samePayment.log.includes("updatePaymentStatus"));
+
+  // A repeat is not a transition: the expired-reservation rule does not apply to it.
+  const expired = createHarness({ expired: true, order: { id: ORDER_ID, number: "AW-2026-000042", status: "confirmed", payment_status: "pending", customer_email: null } });
+  assert.equal((await expired.service.updateStatus(MANAGER, ORDER_ID, { status: "confirmed" })).unchanged, true);
+});
+
+test("QA-32: same status with another payment status (admin) saves only the payment, audited as a payment change", async () => {
+  const harness = createHarness();
+  const result = await harness.service.updateStatus(ADMIN, ORDER_ID, { status: "new", paymentStatus: "paid" });
+  assert.deepEqual(result, { status: "new", previousStatus: "new", notificationQueued: false, unchanged: false });
+  const steps = harness.log.filter((step) => !/^(BEGIN|COMMIT|ROLLBACK)$/.test(step));
+  assert.deepEqual(steps, ["lockOrder", "updatePaymentStatus", "audit"]);
+  assert.deepEqual(harness.audits, [{
+    actorUserId: ADMIN.id,
+    action: "order.payment_status_updated",
+    entityType: "order",
+    entityId: ORDER_ID,
+    details: { orderId: ORDER_ID, previousPaymentStatus: "pending", paymentStatus: "paid" },
+  }]);
+  // Managers still cannot do it.
+  await rejectsWith(createHarness().service.updateStatus(MANAGER, ORDER_ID, { status: "new", paymentStatus: "paid" }), "PAYMENT_STATUS_FORBIDDEN", 403);
 });
 
 test("unknown order: 404 for status, payment and comments", async () => {
@@ -399,6 +435,16 @@ test("PostgreSQL: staff status change writes actor and comment to history; other
 
     const audit = await pool.query("SELECT 1 FROM admin_audit_log WHERE entity_id = $1 AND action = 'order.status_updated' AND actor_user_id = $2", [orderId, managerId]);
     assert.equal(audit.rowCount, 1);
+
+    // QA-32: repeating the current status writes nothing (no history row, no audit row).
+    const repeat = await service.updateStatus({ id: managerId, role: "manager" }, orderId, { status: "processing" });
+    assert.equal(repeat.unchanged, true);
+    const counts = await pool.query<{ history: number; audit: number }>(
+      `SELECT (SELECT COUNT(*)::int FROM order_status_history WHERE order_id = $1) AS history,
+              (SELECT COUNT(*)::int FROM admin_audit_log WHERE entity_id = $1) AS audit`,
+      [orderId],
+    );
+    assert.deepEqual(counts.rows[0], { history: 3, audit: 1 });
 
     const comment = await service.addComment({ id: managerId, role: "manager" }, orderId, { body: "Внутренний комментарий" });
     assert.equal(comment.author?.id, managerId);

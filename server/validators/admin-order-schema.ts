@@ -27,8 +27,13 @@ const hasForbiddenCharacters = (value: string) => value.includes("\u0000");
 
 export const orderIdSchema = z.uuid({ error: "Некорректный идентификатор заказа." });
 
+// Messages for a JSON body that is not an object (null, [], "text").
+const statusBodyMessage = "Выберите допустимый статус заказа.";
+const paymentBodyMessage = "Выберите допустимый статус оплаты.";
+const commentBodyMessage = "Введите текст комментария.";
+
 export const updateOrderStatusSchema = z.object({
-  status: z.enum(ORDER_STATUSES, { error: "Выберите допустимый статус заказа." }),
+  status: z.enum(ORDER_STATUSES, { error: statusBodyMessage }),
   /** Only the admin role may set it (canChangePaymentStatus). */
   paymentStatus: z
     .enum(PAYMENT_STATUSES, { error: "Выберите допустимый статус оплаты." })
@@ -41,24 +46,24 @@ export const updateOrderStatusSchema = z.object({
     .refine((value) => !hasForbiddenCharacters(value), commentCharactersMessage)
     .transform((value) => value || undefined)
     .optional(),
-});
+}, { error: statusBodyMessage });
 
 export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusSchema>;
 
 export const updatePaymentStatusSchema = z.object({
-  paymentStatus: z.enum(PAYMENT_STATUSES, { error: "Выберите допустимый статус оплаты." }),
-});
+  paymentStatus: z.enum(PAYMENT_STATUSES, { error: paymentBodyMessage }),
+}, { error: paymentBodyMessage });
 
 export type UpdatePaymentStatusInput = z.infer<typeof updatePaymentStatusSchema>;
 
 export const createOrderCommentSchema = z.object({
   body: z
-    .string({ error: "Введите текст комментария." })
+    .string({ error: commentBodyMessage })
     .trim()
-    .min(1, "Введите текст комментария.")
+    .min(1, commentBodyMessage)
     .max(ORDER_COMMENT_MAXIMUM_LENGTH, commentLengthMessage)
     .refine((value) => !hasForbiddenCharacters(value), commentCharactersMessage),
-});
+}, { error: commentBodyMessage });
 
 export type CreateOrderCommentInput = z.infer<typeof createOrderCommentSchema>;
 

@@ -4,9 +4,13 @@ import type { ReactNode } from "react";
 import { businessConfig } from "@/config/business";
 import styles from "./order-page.module.css";
 
+const DASHBOARD_PATH = "/admin";
+
 /**
  * Frame of the standalone admin order pages (/admin/orders, /admin/orders/[id]):
  * the top bar of the admin panel with a way back, without the dashboard sidebar.
+ * The «Панель управления» button is shown only when the back link leads
+ * elsewhere, so a page never has two links to /admin.
  */
 export function OrderPageShell({
   backHref,
@@ -36,11 +40,13 @@ export function OrderPageShell({
             ))}
           </nav>
         </div>
-        <div className="admin-topbar-actions">
-          <Link className="admin-secondary-button" href="/admin">
-            <LayoutDashboard size={16} aria-hidden="true" /> Панель управления
-          </Link>
-        </div>
+        {backHref !== DASHBOARD_PATH && (
+          <div className="admin-topbar-actions">
+            <Link className="admin-secondary-button" href={DASHBOARD_PATH}>
+              <LayoutDashboard size={16} aria-hidden="true" /> Панель управления
+            </Link>
+          </div>
+        )}
       </header>
       <div className="admin-content">{children}</div>
     </main>

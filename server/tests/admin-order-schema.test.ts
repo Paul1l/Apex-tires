@@ -4,6 +4,7 @@ import {
   adminOrderListQuerySchema,
   canChangePaymentStatus,
   createOrderCommentSchema,
+  firstValidationMessage,
   orderIdSchema,
   orderListFiltersFromSearchParams,
   parseAdminOrderListQuery,
@@ -42,6 +43,22 @@ test("status change: payment status values are the ones the code base already us
   }
   for (const paymentStatus of ["PAID", "partially_paid", "", null, 1]) {
     assert.equal(updatePaymentStatusSchema.safeParse({ paymentStatus }).success, false, String(paymentStatus));
+  }
+});
+
+test("QA-31: a JSON body that is not an object gets a Russian message, not \"Invalid input\"", () => {
+  const cases = [
+    [updateOrderStatusSchema, "Выберите допустимый статус заказа."],
+    [updatePaymentStatusSchema, "Выберите допустимый статус оплаты."],
+    [createOrderCommentSchema, "Введите текст комментария."],
+  ] as const;
+  for (const [schema, message] of cases) {
+    for (const body of [null, [], "text", 42, true]) {
+      const result = schema.safeParse(body);
+      assert.equal(result.success, false, JSON.stringify(body));
+      assert.equal(firstValidationMessage(result.error!, "fallback"), message, JSON.stringify(body));
+      assert.ok(!/invalid input/i.test(JSON.stringify(result.error!.issues)), JSON.stringify(body));
+    }
   }
 });
 
