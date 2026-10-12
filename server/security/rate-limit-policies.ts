@@ -37,12 +37,18 @@ export function normalizeEmailForLimits(email: string | null | undefined): strin
 
 /**
  * Staff sign-in with an authenticator code (POST /api/auth/staff/login).
- * Fixed defensive limits on top of the account lockout (5 wrong codes →
- * 15 minutes): every attempt counts, successful or not, for the client
- * address and for the email typed (existing or not, so the limit reveals
- * nothing about which addresses belong to staff).
+ * Fixed defensive limits on top of the lockouts (5 wrong codes → 15 minutes):
+ * every attempt counts, successful or not.
+ * - perIp: always, for the client address;
+ * - perEmail: attempts without a valid trusted-device token, for the email
+ *   typed (existing or not, so the limit reveals nothing about which
+ *   addresses belong to staff);
+ * - perDevice: attempts with a valid trusted-device token, for the pair
+ *   email + device, so a stranger exhausting perEmail does not block the
+ *   employee's own browsers (OWASP "device cookies").
  */
 export const STAFF_LOGIN_RATE_LIMITS = {
   perIp: { scope: "staff-login:ip", limit: 20, windowSeconds: 900 },
   perEmail: { scope: "staff-login:email", limit: 10, windowSeconds: 900 },
+  perDevice: { scope: "staff-login:device", limit: 10, windowSeconds: 900 },
 } as const satisfies Record<string, RateLimitRule>;

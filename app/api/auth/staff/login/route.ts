@@ -9,6 +9,14 @@ import {
   STAFF_LOGIN_RATE_LIMITS,
 } from "@/server/security/rate-limit-policies";
 import { requireSameOrigin } from "@/server/security/request-origin";
+import {
+  nextStaffDeviceTokens,
+  parseStaffDeviceCookie,
+  readCookieValue,
+  serializeStaffDeviceCookie,
+  STAFF_DEVICE_COOKIE_NAME,
+  staffDeviceCookieOptions,
+} from "@/server/security/staff-devices";
 import { getStaffServices } from "@/server/services/staff-service-factory";
 import { STAFF_LOGIN_FAILED_MESSAGE } from "@/server/services/staff-auth-service";
 import { applicationLogger } from "@/server/types/common";
@@ -24,8 +32,9 @@ const NO_STORE = { "Cache-Control": "no-store" };
 /**
  * Staff sign-in: email + 6-digit authenticator code. On success sets the
  * same `apex_session` cookie as the customer sign-in, for 12 hours, bound to
- * a `staff_totp` session (the only kind that grants manager/admin rights).
- * Sign-out uses DELETE /api/auth/session.
+ * a `staff_totp` session (the only kind that grants manager/admin rights),
+ * and the trusted-device cookie (90 days, sent only to this endpoint).
+ * Sign-out uses DELETE /api/auth/session; the device cookie stays.
  */
 export async function POST(request: Request) {
   try {
@@ -50,11 +59,29 @@ export async function POST(request: Request) {
       });
     }
     const { email, code } = validation.data;
-    await enforceRateLimit(services.rateLimiter, STAFF_LOGIN_RATE_LIMITS.perEmail, email, {
-      message: "Слишком много попыток входа для этого email.",
-    });
+    const deviceTokens = parseStaffDeviceCookie(
+      readCookieValue(request.headers.get("cookie"), STAFF_DEVICE_COOKIE_NAME),
+    );
+    // A trusted device of this account has its own limit: a stranger who
+    // exhausts the per-email limit does not block the employee's browsers.
+    const trustedDeviceId =
+      deviceTokens.length > 0
+        ? await services.auth.findTrustedDeviceId(email, deviceTokens)
+        : null;
+    if (trustedDeviceId) {
+      await enforceRateLimit(
+        services.rateLimiter,
+        STAFF_LOGIN_RATE_LIMITS.perDevice,
+        `${email}:${trustedDeviceId}`,
+        { message: "Слишком много попыток входа с этого устройства." },
+      );
+    } else {
+      await enforceRateLimit(services.rateLimiter, STAFF_LOGIN_RATE_LIMITS.perEmail, email, {
+        message: "Слишком много попыток входа для этого email.",
+      });
+    }
 
-    const session = await services.auth.login({ email, code });
+    const session = await services.auth.login({ email, code, deviceTokens });
     const response = NextResponse.json(
       { ok: true, user: session.user },
       { headers: NO_STORE },
@@ -63,6 +90,13 @@ export async function POST(request: Request) {
       AUTHENTICATION_COOKIE_NAME,
       session.token,
       sessionCookieOptions(session.expiresInSeconds),
+    );
+    response.cookies.set(
+      STAFF_DEVICE_COOKIE_NAME,
+      serializeStaffDeviceCookie(
+        nextStaffDeviceTokens(deviceTokens, session.replacedDeviceToken, session.deviceToken),
+      ),
+      staffDeviceCookieOptions(),
     );
     return response;
   } catch (error) {

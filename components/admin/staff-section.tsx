@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { KeyRound, RefreshCw, UserPlus } from "lucide-react";
-import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useStore } from "@/components/store-provider";
 import {
   StaffEnrollmentDialog,
@@ -140,6 +140,32 @@ export function StaffSection() {
     signedOut: boolean;
   } | null>(null);
   const formHintId = useId();
+  const addButtonReference = useRef<HTMLButtonElement>(null);
+  const rowReferences = useRef(new Map<string, HTMLTableRowElement>());
+  // Where focus goes when the key dialog closes: the control that opened it,
+  // or the member's row when that control is gone (QA-29b).
+  const returnFocusReference = useRef<{ opener: HTMLElement | null; memberId: string } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (shownKey) return;
+    const target = returnFocusReference.current;
+    if (!target) return;
+    returnFocusReference.current = null;
+    const { opener } = target;
+    // Runs after the dialog's own focus restore, which may have picked <body>
+    // (the opener was disabled while the request was running).
+    if (
+      opener?.isConnected &&
+      !opener.closest("[inert]") &&
+      !(opener instanceof HTMLButtonElement && opener.disabled)
+    ) {
+      opener.focus();
+      return;
+    }
+    rowReferences.current.get(target.memberId)?.focus();
+  }, [shownKey]);
 
   const handleFailure = useCallback((error: unknown) => {
     if (error instanceof StaffApiError && error.status === 403) setLoadState("forbidden");
@@ -201,6 +227,10 @@ export function StaffSection() {
       });
       if (body.member && body.enrollment) {
         replaceMember(body.member);
+        returnFocusReference.current = {
+          opener: addButtonReference.current,
+          memberId: body.member.id,
+        };
         setShownKey({ member: body.member, enrollment: body.enrollment, signedOut: false });
         setNotice({
           kind: "success",
@@ -247,7 +277,7 @@ export function StaffSection() {
     }
   }
 
-  async function reissueKey(member: StaffMember, isSelf: boolean) {
+  async function reissueKey(member: StaffMember, isSelf: boolean, opener: HTMLElement) {
     const confirmation = isSelf
       ? "Выдать вам новый ключ? Старый ключ перестанет работать, текущая сессия завершится — после этого войдите с кодом из нового ключа."
       : `Выдать новый ключ для ${member.email}? Старый ключ перестанет работать, все сессии сотрудника завершатся.`;
@@ -258,6 +288,7 @@ export function StaffSection() {
       const body = await callStaffApi(`/api/admin/staff/${member.id}/totp`, { method: "POST" });
       if (body.member && body.enrollment) {
         replaceMember(body.member);
+        returnFocusReference.current = { opener, memberId: body.member.id };
         setShownKey({ member: body.member, enrollment: body.enrollment, signedOut: isSelf });
       }
     } catch (error) {
@@ -370,6 +401,7 @@ export function StaffSection() {
               </select>
             </label>
             <button
+              ref={addButtonReference}
               className="admin-primary-button"
               type="submit"
               disabled={creating || loadState !== "ready"}
@@ -413,7 +445,14 @@ export function StaffSection() {
                     const isSelf = member.id === user?.id;
                     const busy = busyId === member.id;
                     return (
-                      <tr key={member.id}>
+                      <tr
+                        key={member.id}
+                        tabIndex={-1}
+                        ref={(row) => {
+                          if (row) rowReferences.current.set(member.id, row);
+                          else rowReferences.current.delete(member.id);
+                        }}
+                      >
                         <td className={styles.person}>
                           <strong>
                             {member.name || "Без имени"}
@@ -449,7 +488,7 @@ export function StaffSection() {
                             <button
                               type="button"
                               disabled={busy}
-                              onClick={() => void reissueKey(member, isSelf)}
+                              onClick={(event) => void reissueKey(member, isSelf, event.currentTarget)}
                               aria-label={`Новый ключ: ${member.email}`}
                             >
                               {member.enrolled ? "Новый ключ" : "Выдать ключ"}

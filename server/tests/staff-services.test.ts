@@ -7,9 +7,19 @@ import type {
   StaffLoginCandidateRow,
   StaffMemberRow,
   StaffRepository,
+  StaffTrustedDeviceRow,
   StaffUserRow,
   UserStatus,
 } from "../repositories/staff-repository.js";
+import {
+  MAXIMUM_DEVICE_TOKENS_PER_COOKIE,
+  nextStaffDeviceTokens,
+  parseStaffDeviceCookie,
+  serializeStaffDeviceCookie,
+  STAFF_DEVICE_COOKIE_PATH,
+  STAFF_DEVICE_LIFETIME_SECONDS,
+  staffDeviceCookieOptions,
+} from "../security/staff-devices.js";
 import { decryptStaffSecret, deriveStaffSecretKey } from "../security/staff-secret-box.js";
 import { decodeBase32, generateHotp, totpTimeStep } from "../security/totp.js";
 import {
@@ -28,6 +38,16 @@ interface UserRecord extends StaffUserRow {
   created_at: Date;
 }
 
+interface DeviceRecord {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  failed_attempts: number;
+  locked_until: Date | null;
+  expires_at: Date;
+  last_used_at: Date;
+}
+
 interface CredentialRecord {
   secret_ciphertext: string;
   confirmed_at: Date | null;
@@ -43,6 +63,13 @@ function createHarness() {
   const credentials = new Map<string, CredentialRecord>();
   const sessions: Array<{ userId: string; authMethod: SessionAuthMethod; expiresAt: Date; tokenHash: string }> = [];
   const audit: Array<{ actorUserId: string | null; action: string; entityId: string; details: JsonValue }> = [];
+  const devices = new Map<string, DeviceRecord>();
+  const liveDevice = (userId: string | undefined, tokenHashes: readonly string[]): StaffTrustedDeviceRow | null => {
+    const device = [...devices.values()]
+      .filter((item) => item.user_id === userId && tokenHashes.includes(item.token_hash) && item.expires_at.getTime() > now)
+      .sort((left, right) => right.last_used_at.getTime() - left.last_used_at.getTime())[0];
+    return device ? { ...device } : null;
+  };
   const logs: Array<{ context: Record<string, unknown>; message: string }> = [];
 
   const memberRow = (user: UserRecord): StaffMemberRow => {
@@ -75,14 +102,74 @@ function createHarness() {
       if (locked) credential.locked_until = new Date(now + limits.lockSeconds * 1_000);
       return { failed_attempts: credential.failed_attempts, locked };
     },
-    async recordLoginSuccess(_database: unknown, userId: string, step: number) {
+    async recordLoginSuccess(
+      _database: unknown,
+      userId: string,
+      step: number,
+      options: { resetAccountLockout: boolean } = { resetAccountLockout: true },
+    ) {
       const credential = credentials.get(userId)!;
       if (credential.last_used_step !== null && Number(credential.last_used_step) >= step) return false;
-      credential.failed_attempts = 0;
-      credential.locked_until = null;
+      if (options.resetAccountLockout) {
+        credential.failed_attempts = 0;
+        credential.locked_until = null;
+      }
       credential.last_used_step = String(step);
       credential.confirmed_at ??= new Date(now);
       return true;
+    },
+    async findTrustedDeviceByEmail(_database: unknown, email: string, tokenHashes: readonly string[]) {
+      return liveDevice(findByEmail(email)?.id, tokenHashes);
+    },
+    async findTrustedDeviceForUpdate(_database: unknown, userId: string, tokenHashes: readonly string[]) {
+      return liveDevice(userId, tokenHashes);
+    },
+    async recordDeviceFailure(_database: unknown, deviceId: string, limits: { maximumFailures: number; lockSeconds: number }) {
+      const device = devices.get(deviceId)!;
+      device.failed_attempts += 1;
+      const locked = device.failed_attempts >= limits.maximumFailures;
+      if (locked) device.locked_until = new Date(now + limits.lockSeconds * 1_000);
+      return { failed_attempts: device.failed_attempts, locked };
+    },
+    async rotateTrustedDevice(_database: unknown, deviceId: string, tokenHash: string, lifetimeSeconds: number) {
+      Object.assign(devices.get(deviceId)!, {
+        token_hash: tokenHash,
+        last_used_at: new Date(now),
+        expires_at: new Date(now + lifetimeSeconds * 1_000),
+        failed_attempts: 0,
+        locked_until: null,
+      });
+    },
+    async createTrustedDevice(
+      _database: unknown,
+      device: { userId: string; tokenHash: string; lifetimeSeconds: number; maximumDevices: number },
+    ) {
+      const id = crypto.randomUUID();
+      devices.set(id, {
+        id,
+        user_id: device.userId,
+        token_hash: device.tokenHash,
+        failed_attempts: 0,
+        locked_until: null,
+        expires_at: new Date(now + device.lifetimeSeconds * 1_000),
+        last_used_at: new Date(now),
+      });
+      const own = [...devices.values()]
+        .filter((item) => item.user_id === device.userId)
+        .sort((left, right) => right.last_used_at.getTime() - left.last_used_at.getTime());
+      own.forEach((item, index) => {
+        if (index >= device.maximumDevices || item.expires_at.getTime() <= now) devices.delete(item.id);
+      });
+    },
+    async deleteTrustedDevicesForUser(_database: unknown, userId: string) {
+      let removed = 0;
+      for (const device of [...devices.values()]) {
+        if (device.user_id === userId) {
+          devices.delete(device.id);
+          removed += 1;
+        }
+      }
+      return removed;
     },
     async listStaff() {
       return [...users.values()].filter((user) => user.role !== "customer").map(memberRow);
@@ -208,6 +295,7 @@ function createHarness() {
     sessions,
     audit,
     logs,
+    devices,
     addUser,
     now: () => now,
     advance(milliseconds: number) { now += milliseconds; },
@@ -500,4 +588,193 @@ test("the server command creates, re-activates and re-keys the last administrato
     409,
     "LAST_ADMIN_REQUIRED",
   );
+});
+
+// --- Trusted devices (QA-28, OWASP "device cookies") ---
+
+/** Browser cookie jar of the trusted-device cookie. */
+function createBrowser() {
+  let tokens: string[] = [];
+  return {
+    get tokens() {
+      return tokens;
+    },
+    async login(harness: Harness, email: string, code: string) {
+      const session = await harness.auth.login({ email, code, deviceTokens: tokens });
+      tokens = nextStaffDeviceTokens(tokens, session.replacedDeviceToken, session.deviceToken);
+      return session;
+    },
+  };
+}
+
+test("a stranger without the device cookie locks the account, the employee's browser still signs in", async () => {
+  const harness = createHarness();
+  const { member, enrollment } = await createEnrolledStaff(harness);
+  const employee = createBrowser();
+  const first = await employee.login(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+  assert.equal(first.replacedDeviceToken, undefined, "a new device is trusted after the first sign-in");
+  assert.equal(employee.tokens.length, 1);
+  assert.equal(harness.devices.size, 1);
+  assert.ok(
+    ![...harness.devices.values()].some((device) => device.token_hash === employee.tokens[0]),
+    "only the HMAC of the device token is stored",
+  );
+  assert.ok(await harness.auth.findTrustedDeviceId("manager@shop.ru", employee.tokens));
+  assert.equal(await harness.auth.findTrustedDeviceId("other@shop.ru", employee.tokens), null);
+
+  // The stranger has no device cookie: failures count on the account.
+  harness.advance(30_000);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await assertLoginRefused(harness, "manager@shop.ru", wrongCode(harness, enrollment.secret));
+  }
+  assert.ok(harness.credentials.get(member.id)?.locked_until, "account locked for devices without a token");
+  await assertLoginRefused(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+
+  // The employee's browser is not affected.
+  const previousToken = employee.tokens[0];
+  const second = await employee.login(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+  assert.equal(second.user.role, "manager");
+  assert.equal(second.replacedDeviceToken, previousToken);
+  assert.notEqual(employee.tokens[0], previousToken, "the device token is rotated");
+  assert.equal(employee.tokens.length, 1);
+  assert.equal(harness.devices.size, 1);
+  const login = harness.audit.filter((event) => event.action === "staff.login").at(-1);
+  assert.deepEqual(login?.details, { method: "totp", firstSignIn: false, trustedDevice: true });
+
+  // The account lockout still guards devices without a token, and a copied
+  // old device token no longer counts as trusted.
+  assert.ok(harness.credentials.get(member.id)?.locked_until);
+  harness.advance(30_000);
+  await assertLoginRefused(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+  await assert.rejects(
+    harness.auth.login({
+      email: "manager@shop.ru",
+      code: currentCode(harness, enrollment.secret),
+      deviceTokens: [previousToken],
+    }),
+    ApplicationError,
+  );
+  assert.ok(harness.logs.filter((log) => log.context.reason === "locked").length >= 3);
+});
+
+test("5 wrong codes from a trusted device lock only that device", async () => {
+  const harness = createHarness();
+  const { member, enrollment } = await createEnrolledStaff(harness);
+  const laptop = createBrowser();
+  await laptop.login(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+  harness.advance(30_000);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await assert.rejects(
+      harness.auth.login({ email: "manager@shop.ru", code: wrongCode(harness, enrollment.secret), deviceTokens: laptop.tokens }),
+      (error: unknown) => error instanceof ApplicationError && error.message === STAFF_LOGIN_FAILED_MESSAGE,
+    );
+  }
+  const [device] = [...harness.devices.values()];
+  assert.equal(device.failed_attempts, 5);
+  assert.ok(device.locked_until && device.locked_until.getTime() > harness.now());
+  assert.equal(harness.credentials.get(member.id)?.failed_attempts, 0, "the account counter is untouched");
+  assert.equal(harness.credentials.get(member.id)?.locked_until, null);
+  assert.ok(harness.audit.some((event) => event.action === "staff.device_locked"));
+  assert.ok(!harness.audit.some((event) => event.action === "staff.login_locked"));
+
+  // Even a correct code is refused on the locked device…
+  await assert.rejects(
+    harness.auth.login({ email: "manager@shop.ru", code: currentCode(harness, enrollment.secret), deviceTokens: laptop.tokens }),
+    ApplicationError,
+  );
+  assert.ok(harness.logs.some((log) => log.context.reason === "device_locked" && log.context.trustedDevice === true));
+  // …while another browser signs in normally and becomes trusted itself.
+  const phone = createBrowser();
+  await phone.login(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+  assert.equal(harness.devices.size, 2);
+
+  // After 15 minutes the laptop works again and its counter is reset.
+  harness.advance(STAFF_LOGIN_LOCK_SECONDS * 1_000 + 30_000);
+  await laptop.login(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+  assert.ok([...harness.devices.values()].every((item) => item.failed_attempts === 0));
+});
+
+test("a new key, a block and a role change forget the trusted devices", async () => {
+  const harness = createHarness();
+  const { member, enrollment, actorId } = await createEnrolledStaff(harness);
+  const browser = createBrowser();
+  await browser.login(harness, "manager@shop.ru", currentCode(harness, enrollment.secret));
+  assert.equal(harness.devices.size, 1);
+
+  const reissued = await harness.management.reissueKey(actorId, member.id);
+  assert.equal(harness.devices.size, 0, "new key → devices forgotten");
+  // The old cookie is now an untrusted attempt: failures count on the account.
+  harness.advance(30_000);
+  await assert.rejects(
+    harness.auth.login({ email: "manager@shop.ru", code: wrongCode(harness, reissued.enrollment.secret), deviceTokens: browser.tokens }),
+    ApplicationError,
+  );
+  assert.equal(harness.credentials.get(member.id)?.failed_attempts, 1);
+
+  await browser.login(harness, "manager@shop.ru", currentCode(harness, reissued.enrollment.secret));
+  assert.equal(harness.devices.size, 1);
+  await harness.management.updateStaff(actorId, member.id, { status: "blocked" });
+  assert.equal(harness.devices.size, 0, "block → devices forgotten");
+
+  await harness.management.updateStaff(actorId, member.id, { status: "active" });
+  harness.advance(30_000);
+  await browser.login(harness, "manager@shop.ru", currentCode(harness, reissued.enrollment.secret));
+  assert.equal(harness.devices.size, 1);
+  await harness.management.updateStaff(actorId, member.id, { role: "admin" });
+  assert.equal(harness.devices.size, 0, "role change → devices forgotten");
+  const update = harness.audit.filter((event) => event.action === "staff.updated").at(-1);
+  assert.equal((update?.details as { devicesForgotten?: number }).devicesForgotten, 1);
+
+  harness.advance(30_000);
+  await browser.login(harness, "manager@shop.ru", currentCode(harness, reissued.enrollment.secret));
+  await harness.management.updateStaff(actorId, member.id, { role: "customer" });
+  assert.equal(harness.devices.size, 0, "revoke → devices forgotten");
+});
+
+test("one browser keeps trusted devices of several employees", async () => {
+  const harness = createHarness();
+  const manager = await createEnrolledStaff(harness, "manager@shop.ru");
+  const cashier = await harness.management.createStaff(manager.actorId, {
+    email: "cashier@shop.ru",
+    name: "Кассир",
+    role: "manager",
+  });
+  const sharedBrowser = createBrowser();
+  await sharedBrowser.login(harness, "manager@shop.ru", currentCode(harness, manager.enrollment.secret));
+  await sharedBrowser.login(harness, "cashier@shop.ru", currentCode(harness, cashier.enrollment.secret));
+  assert.equal(sharedBrowser.tokens.length, 2);
+  assert.ok(await harness.auth.findTrustedDeviceId("manager@shop.ru", sharedBrowser.tokens));
+  assert.ok(await harness.auth.findTrustedDeviceId("cashier@shop.ru", sharedBrowser.tokens));
+  harness.advance(30_000);
+  const again = await sharedBrowser.login(harness, "manager@shop.ru", currentCode(harness, manager.enrollment.secret));
+  assert.ok(again.replacedDeviceToken, "the manager's own token is replaced, the cashier's stays");
+  assert.equal(sharedBrowser.tokens.length, 2);
+  assert.ok(await harness.auth.findTrustedDeviceId("cashier@shop.ru", sharedBrowser.tokens));
+});
+
+test("device cookie: format, rotation and options", () => {
+  const token = (character: string) => character.repeat(64);
+  assert.deepEqual(parseStaffDeviceCookie(undefined), []);
+  assert.deepEqual(parseStaffDeviceCookie(`${token("a")}.bad.${token("A")}.${token("b")}.${token("a")}`), [
+    token("a"),
+    token("b"),
+  ]);
+  assert.deepEqual(parseStaffDeviceCookie("x".repeat(2_000)), []);
+  const many = ["1", "2", "3", "4", "5", "6", "7"].map(token);
+  assert.deepEqual(parseStaffDeviceCookie(many.join(".")), many.slice(-MAXIMUM_DEVICE_TOKENS_PER_COOKIE));
+
+  assert.deepEqual(nextStaffDeviceTokens([token("a"), token("b")], token("a"), token("c")), [token("b"), token("c")]);
+  assert.deepEqual(nextStaffDeviceTokens([token("a")], undefined, token("c")), [token("a"), token("c")]);
+  assert.equal(nextStaffDeviceTokens(many.slice(0, 5), undefined, token("c")).length, MAXIMUM_DEVICE_TOKENS_PER_COOKIE);
+  assert.equal(serializeStaffDeviceCookie([token("a"), token("b")]), `${token("a")}.${token("b")}`);
+
+  const options = staffDeviceCookieOptions();
+  assert.equal(options.httpOnly, true);
+  assert.equal(options.sameSite, "strict");
+  assert.equal(options.path, STAFF_DEVICE_COOKIE_PATH);
+  assert.equal(options.path, "/api/auth/staff/login");
+  assert.equal(options.maxAge, STAFF_DEVICE_LIFETIME_SECONDS);
+  assert.equal(STAFF_DEVICE_LIFETIME_SECONDS, 90 * 24 * 60 * 60);
+  assert.equal(options.secure, process.env.NODE_ENV === "production");
 });

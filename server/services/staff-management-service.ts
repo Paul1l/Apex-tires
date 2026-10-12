@@ -70,7 +70,8 @@ function isUniqueViolation(error: unknown): boolean {
  * Staff accounts: list, add or promote, role and status changes, new keys.
  * Rules: nobody changes their own role or status; the last active
  * administrator cannot lose the role or be blocked; a role change, a block
- * and a new key end all sessions of that person. Every change is audited.
+ * and a new key end all sessions of that person and forget their trusted
+ * devices. Every change is audited.
  */
 export class StaffManagementService {
   private readonly now: () => number;
@@ -102,7 +103,10 @@ export class StaffManagementService {
     return this.toStaffMember(row);
   }
 
-  /** New key: stored encrypted, sessions ended, returned once for the QR code. */
+  /**
+   * New key: stored encrypted, sessions and trusted devices forgotten,
+   * returned once for the QR code.
+   */
   private async issueKey(database: DatabaseExecutor, user: StaffUserRow): Promise<StaffEnrollment> {
     const secret = generateTotpSecret();
     try {
@@ -112,6 +116,7 @@ export class StaffManagementService {
         encryptStaffSecret(secret, this.dependencies.encryptionKey, user.id),
       );
       await this.dependencies.repository.deleteSessionsForUser(database, user.id);
+      await this.dependencies.repository.deleteTrustedDevicesForUser(database, user.id);
       return buildStaffEnrollment({ secret, issuer: this.dependencies.issuer, email: user.email });
     } finally {
       secret.fill(0);
@@ -229,8 +234,10 @@ export class StaffManagementService {
       const roleChanged = next.role !== user.role;
       if (next.role === "customer") await repository.deleteCredential(database, user.id);
       let sessionsEnded = 0;
+      let devicesForgotten = 0;
       if (roleChanged || next.status === "blocked") {
         sessionsEnded = await repository.deleteSessionsForUser(database, user.id);
+        devicesForgotten = await repository.deleteTrustedDevicesForUser(database, user.id);
       }
       await repository.recordAudit(database, {
         actorUserId,
@@ -242,6 +249,7 @@ export class StaffManagementService {
           previousStatus: user.status,
           status: next.status,
           sessionsEnded,
+          devicesForgotten,
         },
       });
       return next.role === "customer" ? null : this.readStaffMember(database, user.id);

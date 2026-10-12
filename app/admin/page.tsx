@@ -40,6 +40,12 @@ export default async function AdminPage({
       <AccessMessage message="PostgreSQL и серверные сессии пока не настроены. Демо-доступ отключён." />
     );
   }
+  if (access.status === "unavailable") {
+    // Other /admin/** pages redirect here for any status except "allowed".
+    return (
+      <AccessMessage message="База данных временно недоступна, поэтому вход и проверка доступа сейчас не работают. Повторите попытку через несколько минут." />
+    );
+  }
   if (access.status === "allowed") {
     const { section } = await searchParams;
     return (

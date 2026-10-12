@@ -4,14 +4,25 @@ import { STAFF_SESSION_LIFETIME_SECONDS } from "../../lib/auth/session";
 import type { UserProfile } from "../../lib/types";
 import { withTransaction } from "../database/postgres-client";
 import type { AuthRepository } from "../repositories/auth-repository";
-import type { StaffLoginCandidateRow, StaffRepository } from "../repositories/staff-repository";
+import type {
+  StaffLoginCandidateRow,
+  StaffRepository,
+  StaffTrustedDeviceRow,
+} from "../repositories/staff-repository";
+import {
+  MAXIMUM_DEVICE_TOKENS_PER_COOKIE,
+  MAXIMUM_TRUSTED_DEVICES_PER_USER,
+  STAFF_DEVICE_LIFETIME_SECONDS,
+  STAFF_DEVICE_MAX_FAILED_ATTEMPTS,
+  staffDeviceDigestInput,
+} from "../security/staff-devices";
 import { decryptStaffSecret } from "../security/staff-secret-box";
 import { isStaffRole } from "../security/staff-roles";
 import { generateTotpSecret, verifyTotp } from "../security/totp";
 import { applicationLogger, type ApplicationLogger, type DatabaseExecutor } from "../types/common";
 import { ApplicationError } from "../utils/errors";
 
-/** Consecutive wrong codes before the account is locked. */
+/** Consecutive wrong codes before the account (attempts without a trusted device) is locked. */
 export const STAFF_LOGIN_MAX_FAILED_ATTEMPTS = 5;
 export const STAFF_LOGIN_LOCK_SECONDS = 15 * 60;
 
@@ -28,6 +39,7 @@ export type StaffLoginRefusal =
   | "not_staff"
   | "blocked"
   | "locked"
+  | "device_locked"
   | "invalid_code"
   | "replayed_code"
   | "key_unreadable";
@@ -36,7 +48,7 @@ export interface StaffAuthServiceDependencies {
   pool: Pool;
   repository: StaffRepository;
   authRepository: Pick<AuthRepository, "createSession">;
-  /** OTP_CODE_PEPPER: session tokens are stored as HMAC with it. */
+  /** OTP_CODE_PEPPER: session and device tokens are stored as HMAC with it. */
   securitySecret: string;
   /** AES-256-GCM key for authenticator keys (deriveStaffSecretKey). */
   encryptionKey: Buffer;
@@ -48,6 +60,10 @@ export interface StaffSession {
   token: string;
   expiresInSeconds: number;
   user: UserProfile;
+  /** New trusted-device token for the device cookie (rotated on every sign-in). */
+  deviceToken: string;
+  /** Cookie token of this account that `deviceToken` replaces, if one was used. */
+  replacedDeviceToken?: string;
 }
 
 function createLoginFailedError(): ApplicationError {
@@ -74,7 +90,15 @@ function readStep(value: string | number | null): number | null {
   return Number.isSafeInteger(step) ? step : null;
 }
 
-/** Staff sign-in at /admin: email + 6-digit code from an authenticator app. */
+/**
+ * Staff sign-in at /admin: email + 6-digit code from an authenticator app.
+ *
+ * Lockout follows OWASP "device cookies": an attempt that carries a valid
+ * trusted-device token of this account counts failures on that device only
+ * (5 wrong codes lock the device for 15 minutes); an attempt without one
+ * counts on the account (5 wrong codes lock every device without a token
+ * for 15 minutes). Replay protection is per account in both cases.
+ */
 export class StaffAuthService {
   private readonly now: () => number;
   private readonly logger: ApplicationLogger;
@@ -84,25 +108,68 @@ export class StaffAuthService {
     this.logger = dependencies.logger ?? applicationLogger;
   }
 
+  /** HMAC of each cookie token → the token (at most MAXIMUM_DEVICE_TOKENS_PER_COOKIE). */
+  private async hashDeviceTokens(tokens: readonly string[] | undefined): Promise<Map<string, string>> {
+    const hashes = new Map<string, string>();
+    for (const token of (tokens ?? []).slice(-MAXIMUM_DEVICE_TOKENS_PER_COOKIE)) {
+      hashes.set(
+        await createSecureDigest(this.dependencies.securitySecret, staffDeviceDigestInput(token)),
+        token,
+      );
+    }
+    return hashes;
+  }
+
+  /**
+   * Id of a live trusted device of the account with this email among the
+   * cookie tokens, or null. Picks the rate-limit key before the sign-in.
+   */
+  async findTrustedDeviceId(email: string, deviceTokens: readonly string[]): Promise<string | null> {
+    const hashes = await this.hashDeviceTokens(deviceTokens);
+    if (hashes.size === 0) return null;
+    const device = await this.dependencies.repository.findTrustedDeviceByEmail(
+      this.dependencies.pool,
+      email,
+      [...hashes.keys()],
+    );
+    return device?.id ?? null;
+  }
+
   /**
    * `email` must already be normalized (staffEmailSchema) and `code` be six
    * digits. Throws STAFF_LOGIN_FAILED (401) for every refusal; the reason is
-   * logged without the email or the code.
+   * logged without the email, the code or any token.
    */
-  async login(input: { email: string; code: string }): Promise<StaffSession> {
+  async login(input: {
+    email: string;
+    code: string;
+    deviceTokens?: readonly string[];
+  }): Promise<StaffSession> {
+    const deviceHashes = await this.hashDeviceTokens(input.deviceTokens);
     const outcome = await withTransaction<
-      StaffSession | { refusal: StaffLoginRefusal }
+      StaffSession | { refusal: StaffLoginRefusal; trustedDevice: boolean }
     >(this.dependencies.pool, async (database) => {
-      const candidate = await this.dependencies.repository.findLoginCandidateForUpdate(
-        database,
-        input.email,
-      );
-      const refusal = this.findAccountRefusal(candidate);
-      if (refusal || !candidate) {
+      const repository = this.dependencies.repository;
+      const candidate = await repository.findLoginCandidateForUpdate(database, input.email);
+      const accountRefusal = this.findAccountRefusal(candidate);
+      if (accountRefusal || !candidate) {
         // Same amount of work as a real check, so timing does not tell
         // staff addresses from others.
         verifyTotp({ secret: generateTotpSecret(), code: input.code, timeMilliseconds: this.now() });
-        return { refusal: refusal ?? "unknown_account" };
+        return { refusal: accountRefusal ?? "unknown_account", trustedDevice: false };
+      }
+
+      const device = await repository.findTrustedDeviceForUpdate(database, candidate.id, [
+        ...deviceHashes.keys(),
+      ]);
+      const trustedDevice = device !== null;
+      // A trusted device ignores the account lockout (it guards devices
+      // without a token) and has a lockout of its own. Even a correct code
+      // is refused while the lockout lasts.
+      const lockedUntil = device ? device.locked_until : candidate.locked_until;
+      if (lockedUntil && new Date(lockedUntil).getTime() > this.now()) {
+        verifyTotp({ secret: generateTotpSecret(), code: input.code, timeMilliseconds: this.now() });
+        return { refusal: device ? "device_locked" : "locked", trustedDevice };
       }
 
       let secret: Buffer;
@@ -118,7 +185,7 @@ export class StaffAuthService {
           { reason: "key_unreadable" },
           "Staff authenticator key cannot be decrypted; issue a new key for this employee",
         );
-        return { refusal: "key_unreadable" };
+        return { refusal: "key_unreadable", trustedDevice };
       }
 
       const verification = verifyTotp({
@@ -129,17 +196,40 @@ export class StaffAuthService {
       });
       secret.fill(0);
       if (!verification.valid) {
-        await this.recordFailure(database, candidate.id);
-        return { refusal: verification.reason === "replayed" ? "replayed_code" : "invalid_code" };
+        await this.recordFailure(database, candidate.id, device);
+        return {
+          refusal: verification.reason === "replayed" ? "replayed_code" : "invalid_code",
+          trustedDevice,
+        };
       }
-      const accepted = await this.dependencies.repository.recordLoginSuccess(
-        database,
-        candidate.id,
-        verification.step,
-      );
+      const accepted = await repository.recordLoginSuccess(database, candidate.id, verification.step, {
+        resetAccountLockout: !trustedDevice,
+      });
       if (!accepted) {
-        await this.recordFailure(database, candidate.id);
-        return { refusal: "replayed_code" };
+        await this.recordFailure(database, candidate.id, device);
+        return { refusal: "replayed_code", trustedDevice };
+      }
+
+      // The device token is rotated on every sign-in (a copied old cookie stops working).
+      const deviceToken = generateOpaqueToken(32);
+      const deviceTokenHash = await createSecureDigest(
+        this.dependencies.securitySecret,
+        staffDeviceDigestInput(deviceToken),
+      );
+      if (device) {
+        await repository.rotateTrustedDevice(
+          database,
+          device.id,
+          deviceTokenHash,
+          STAFF_DEVICE_LIFETIME_SECONDS,
+        );
+      } else {
+        await repository.createTrustedDevice(database, {
+          userId: candidate.id,
+          tokenHash: deviceTokenHash,
+          lifetimeSeconds: STAFF_DEVICE_LIFETIME_SECONDS,
+          maximumDevices: MAXIMUM_TRUSTED_DEVICES_PER_USER,
+        });
       }
 
       const token = generateOpaqueToken();
@@ -154,48 +244,80 @@ export class StaffAuthService {
         expiresAt: new Date(this.now() + STAFF_SESSION_LIFETIME_SECONDS * 1_000),
         authMethod: "staff_totp",
       });
-      await this.dependencies.repository.recordAudit(database, {
+      await repository.recordAudit(database, {
         actorUserId: candidate.id,
         action: "staff.login",
         entityId: candidate.id,
-        details: { method: "totp", firstSignIn: candidate.confirmed_at === null },
+        details: {
+          method: "totp",
+          firstSignIn: candidate.confirmed_at === null,
+          trustedDevice,
+        },
       });
       return {
         token,
         expiresInSeconds: STAFF_SESSION_LIFETIME_SECONDS,
         user: toUserProfile(candidate),
+        deviceToken,
+        replacedDeviceToken: device ? deviceHashes.get(device.token_hash) : undefined,
       };
     });
 
     if ("refusal" in outcome) {
-      this.logger.warn({ reason: outcome.refusal }, "Staff sign-in refused");
+      this.logger.warn(
+        { reason: outcome.refusal, trustedDevice: outcome.trustedDevice },
+        "Staff sign-in refused",
+      );
       throw createLoginFailedError();
     }
     return outcome;
   }
 
+  /** Unknown, non-staff and blocked accounts; lockouts are checked per device or account. */
   private findAccountRefusal(candidate: StaffLoginCandidateRow | null): StaffLoginRefusal | null {
     if (!candidate) return "unknown_account";
     if (!isStaffRole(candidate.role)) return "not_staff";
     if (candidate.status !== "active") return "blocked";
-    if (candidate.locked_until && new Date(candidate.locked_until).getTime() > this.now()) {
-      // Even a correct code is refused while the lockout lasts.
-      return "locked";
-    }
     return null;
   }
 
-  private async recordFailure(database: DatabaseExecutor, userId: string): Promise<void> {
-    const result = await this.dependencies.repository.recordLoginFailure(database, userId, {
+  private async recordFailure(
+    database: DatabaseExecutor,
+    userId: string,
+    device: StaffTrustedDeviceRow | null,
+  ): Promise<void> {
+    const repository = this.dependencies.repository;
+    if (device) {
+      const result = await repository.recordDeviceFailure(database, device.id, {
+        maximumFailures: STAFF_DEVICE_MAX_FAILED_ATTEMPTS,
+        lockSeconds: STAFF_LOGIN_LOCK_SECONDS,
+      });
+      if (result.locked) {
+        await repository.recordAudit(database, {
+          actorUserId: null,
+          action: "staff.device_locked",
+          entityId: userId,
+          details: {
+            failedAttempts: result.failed_attempts,
+            lockMinutes: STAFF_LOGIN_LOCK_SECONDS / 60,
+          },
+        });
+      }
+      return;
+    }
+    const result = await repository.recordLoginFailure(database, userId, {
       maximumFailures: STAFF_LOGIN_MAX_FAILED_ATTEMPTS,
       lockSeconds: STAFF_LOGIN_LOCK_SECONDS,
     });
     if (result.locked) {
-      await this.dependencies.repository.recordAudit(database, {
+      await repository.recordAudit(database, {
         actorUserId: null,
         action: "staff.login_locked",
         entityId: userId,
-        details: { failedAttempts: result.failed_attempts, lockMinutes: STAFF_LOGIN_LOCK_SECONDS / 60 },
+        details: {
+          failedAttempts: result.failed_attempts,
+          lockMinutes: STAFF_LOGIN_LOCK_SECONDS / 60,
+        },
       });
     }
   }

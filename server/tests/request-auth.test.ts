@@ -5,6 +5,7 @@ import { createSecureDigest } from "../../lib/auth/security.js";
 import type { SessionAuthMethod } from "../../lib/auth/session.js";
 import type { AuthRepository, SessionUserRow, UserRole } from "../repositories/auth-repository.js";
 import { authorizeRequest, decideRoleAccess, readSessionToken } from "../security/request-auth.js";
+import { resolveStaffPageAccess } from "../security/staff-page-guard.js";
 import { effectiveSessionRole } from "../security/staff-roles.js";
 import { AuthService, roleHasAccess } from "../services/auth-service.js";
 import { ApplicationError } from "../utils/errors.js";
@@ -175,4 +176,46 @@ test("state-changing staff requests from another site are refused before the ses
     headers: { origin: "https://evil.example", cookie: "apex_session=staff-admin" },
   });
   await assertRejected(authorizeRequest(request, ["admin"], harness.lookUp), 403, "UNTRUSTED_ORIGIN");
+});
+
+test("admin pages answer \"unavailable\" instead of failing when the database is down", async () => {
+  const harness = createSessionHarness();
+  await harness.addSession("staff-admin", { role: "admin", authMethod: "staff_totp" });
+  await harness.addSession("customer-session-of-admin", { role: "admin", authMethod: "customer_otp" });
+  const databaseDown = async () => {
+    throw Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" });
+  };
+  const brokenSchema = async () => {
+    throw Object.assign(new Error('column "auth_method" does not exist'), { code: "42703" });
+  };
+  const logged: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...values: unknown[]) => {
+    logged.push(values);
+  };
+  try {
+    assert.deepEqual(await resolveStaffPageAccess("staff-admin", ["manager", "admin"], databaseDown), {
+      status: "unavailable",
+    });
+    assert.deepEqual(await resolveStaffPageAccess("staff-admin", ["manager", "admin"], brokenSchema), {
+      status: "unavailable",
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(logged.length, 2);
+  assert.ok(!JSON.stringify(logged).includes("staff-admin"), "the session token is not logged");
+
+  assert.deepEqual(await resolveStaffPageAccess(null, ["manager", "admin"], databaseDown), {
+    status: "signed_out",
+  });
+  const allowed = await resolveStaffPageAccess("staff-admin", ["manager", "admin"], harness.lookUp);
+  assert.equal(allowed.status, "allowed");
+  assert.deepEqual(
+    await resolveStaffPageAccess("customer-session-of-admin", ["manager", "admin"], harness.lookUp),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(await resolveStaffPageAccess("unknown", ["manager", "admin"], harness.lookUp), {
+    status: "signed_out",
+  });
 });

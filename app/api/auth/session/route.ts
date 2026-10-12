@@ -4,7 +4,9 @@ import {
   authenticationSessionsAreConfigured,
   createApplicationServices,
 } from "@/server/bootstrap/application-services";
+import { requireSameOrigin } from "@/server/security/request-origin";
 import { applicationLogger } from "@/server/types/common";
+import { toSafeError } from "@/server/utils/errors";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,7 +53,19 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * Sign-out (storefront and admin). Same CSRF rule as other state-changing
+ * routes: only from a store page (`Origin` of the site or
+ * `Sec-Fetch-Site: same-origin`), so a foreign page cannot sign the visitor
+ * out. A refused request changes nothing.
+ */
 export async function DELETE(request: NextRequest) {
+  try {
+    requireSameOrigin(request);
+  } catch (error) {
+    const safeError = toSafeError(error);
+    return noStoreJson(safeError.body, safeError.statusCode);
+  }
   const token = request.cookies.get(AUTHENTICATION_COOKIE_NAME)?.value;
   if (token && authenticationSessionsAreConfigured()) {
     try {
