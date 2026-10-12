@@ -45,7 +45,16 @@ const nextConfig: NextConfig = {
     useTypeScriptCli: true,
   },
   async headers() {
-    return [{ source: "/:path*", headers: [...securityHeaders, ...previewIndexingHeaders] }];
+    return [
+      { source: "/:path*", headers: [...securityHeaders, ...previewIndexingHeaders] },
+      // Product photos uploaded in the admin (app/uploads/[...path]): never
+      // a document, even if a file slipped past the content check. Listed
+      // after the baseline rule: for the same key the last matching rule wins.
+      {
+        source: "/uploads/:path*",
+        headers: [{ key: "Content-Security-Policy", value: "default-src 'none'; sandbox; frame-ancestors 'none'" }],
+      },
+    ];
   },
 };
 
