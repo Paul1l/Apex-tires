@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { businessConfig, type BusinessConfig } from "../../config/business.js";
+import { getDefaultSiteSettings, type SiteSettings } from "../../lib/site-settings.js";
 import type { ProductDetails } from "../../lib/types.js";
 import {
   DEFAULT_OPEN_GRAPH_IMAGE,
@@ -209,21 +210,56 @@ function productionConfig(overrides: Partial<BusinessConfig> = {}): BusinessConf
       inn: "222100000000",
       ogrnip: "322220000000000",
     },
-    contacts: { ...businessConfig.contacts, phone: "+7 (3852) 00-00-01", email: "shop@apex-barnaul.ru" },
-    location: { ...businessConfig.location, address: "ул. Попова, 1", latitude: 53.37, longitude: 83.75 },
-    workingHours: "Mo-Fr 09:00-19:00; Sa 10:00-16:00",
+    // Valid build-time contacts that differ from the saved settings below:
+    // the markup must take the settings, never these values.
+    contacts: { ...businessConfig.contacts, phone: "+7 (3852) 00-00-09", email: "build@apex-barnaul.ru" },
+    location: { ...businessConfig.location, address: "ул. Сборочная, 9", latitude: 10, longitude: 20 },
+    workingHours: "Mo-Su 00:00-24:00",
+    social: { ...businessConfig.social, vk: "https://vk.com/build_apex", telegram: "https://t.me/build_apex" },
     catalog: { ...businessConfig.catalog, dataMode: "database" },
     ...overrides,
   } as BusinessConfig;
 }
 
+interface SettingsOverrides {
+  contacts?: Partial<SiteSettings["contacts"]>;
+  location?: Partial<SiteSettings["location"]>;
+  workingHours?: string | null;
+}
+
+/** Store settings as saved in the admin (store_settings, key site_settings). */
+function savedSettings(overrides: SettingsOverrides = {}): SiteSettings {
+  const defaults = getDefaultSiteSettings();
+  return {
+    ...defaults,
+    contacts: {
+      ...defaults.contacts,
+      phone: "+7 (3852) 00-00-01",
+      email: "shop@apex-barnaul.ru",
+      vk: "https://vk.com/apex_barnaul",
+      telegram: "https://t.me/apex_barnaul",
+      ...overrides.contacts,
+    },
+    location: {
+      ...defaults.location,
+      address: "ул. Попова, 1",
+      latitude: 53.37,
+      longitude: 83.75,
+      twoGisUrl: "https://2gis.ru/barnaul/firm/70000001036958402",
+      ...overrides.location,
+    },
+    workingHours:
+      overrides.workingHours === undefined ? "Mo-Fr 09:00-19:00; Sa 10:00-16:00" : overrides.workingHours,
+  };
+}
+
 test("site JSON-LD is not emitted on the preview stage", () => {
-  assert.equal(createSiteJsonLd(businessConfig), null);
-  assert.equal(createSiteJsonLd({ ...productionConfig(), deploymentStage: "preview" }), null);
+  assert.equal(createSiteJsonLd(businessConfig, getDefaultSiteSettings()), null);
+  assert.equal(createSiteJsonLd({ ...productionConfig(), deploymentStage: "preview" }, savedSettings()), null);
 });
 
 test("production: Organization (TireShop) + WebSite with confirmed contacts", () => {
-  const jsonLd = createSiteJsonLd(productionConfig()) as unknown as JsonView;
+  const jsonLd = createSiteJsonLd(productionConfig(), savedSettings()) as unknown as JsonView;
   const organization = jsonLd["@graph"][0];
   const website = jsonLd["@graph"][1];
 
@@ -245,11 +281,42 @@ test("production: Organization (TireShop) + WebSite with confirmed contacts", ()
   assert.deepEqual(website.publisher, { "@id": organization["@id"] });
 });
 
+test("telephone, email, address, geo, hours and sameAs come from the saved settings, not from the build", () => {
+  const organization = (createSiteJsonLd(productionConfig(), savedSettings()) as unknown as JsonView)["@graph"][0];
+
+  assert.equal(organization.telephone, "+7 (3852) 00-00-01");
+  assert.equal(organization.email, "shop@apex-barnaul.ru");
+  assert.equal(organization.address.streetAddress, "ул. Попова, 1");
+  assert.deepEqual(organization.geo, { "@type": "GeoCoordinates", latitude: 53.37, longitude: 83.75 });
+  assert.equal((organization.openingHoursSpecification as unknown as JsonView[]).length, 2);
+  assert.deepEqual(organization.sameAs, [
+    "https://vk.com/apex_barnaul",
+    "https://t.me/apex_barnaul",
+    "https://2gis.ru/barnaul/firm/70000001036958402",
+  ]);
+  // Brand, legal name and site URL stay in the environment.
+  assert.equal(organization.legalName, "Петров Сергей Олегович");
+  assert.equal(organization.alternateName, "Шинный центр APEX");
+
+  const serialized = serializeJsonLd(createSiteJsonLd(productionConfig(), savedSettings()));
+  for (const buildValue of ["00-00-09", "build@apex-barnaul.ru", "Сборочная", "build_apex"]) {
+    assert.ok(!serialized.includes(buildValue), `build-time value ${buildValue} is not marked up`);
+  }
+
+  const changed = (
+    createSiteJsonLd(
+      productionConfig(),
+      savedSettings({ contacts: { phone: "+7 (3852) 55-44-33", vk: null, telegram: null }, location: { latitude: null } }),
+    ) as unknown as JsonView
+  )["@graph"][0];
+  assert.equal(changed.telephone, "+7 (3852) 55-44-33");
+  assert.equal(changed.geo, undefined, "no geo without both coordinates");
+  assert.deepEqual(changed.sameAs, ["https://2gis.ru/barnaul/firm/70000001036958402"]);
+});
+
 test("unconfirmed or placeholder contacts are never marked up", () => {
-  const config = productionConfig({
-    contacts: { ...businessConfig.contacts, phone: "+7 999 999-99-99", email: null },
-  });
-  const organization = (createSiteJsonLd(config) as unknown as JsonView)["@graph"][0];
+  const settings = savedSettings({ contacts: { phone: "+7 999 999-99-99", email: null } });
+  const organization = (createSiteJsonLd(productionConfig(), settings) as unknown as JsonView)["@graph"][0];
 
   assert.equal(organization["@type"], "Organization");
   assert.equal(organization.telephone, undefined);
@@ -257,9 +324,27 @@ test("unconfirmed or placeholder contacts are never marked up", () => {
   assert.equal(organization.email, undefined);
 });
 
+test("saved settings pass the production checks: a non-+7 phone, test address or email is not marked up", () => {
+  const foreignPhone = (createSiteJsonLd(productionConfig(), savedSettings({ contacts: { phone: "8 (3852) 00-00-01" } })) as unknown as JsonView)["@graph"][0];
+  assert.equal(foreignPhone["@type"], "Organization");
+  assert.equal(foreignPhone.telephone, undefined);
+
+  const testAddress = (createSiteJsonLd(productionConfig(), savedSettings({ location: { address: "Тестовая улица, 1" } })) as unknown as JsonView)["@graph"][0];
+  assert.equal(testAddress["@type"], "Organization");
+  assert.equal(testAddress.address, undefined);
+
+  const testEmail = (createSiteJsonLd(productionConfig(), savedSettings({ contacts: { email: "shop@example.ru" } })) as unknown as JsonView)["@graph"][0];
+  assert.equal(testEmail["@type"], "TireShop");
+  assert.equal(testEmail.email, undefined);
+
+  const noAddress = (createSiteJsonLd(productionConfig(), savedSettings({ location: { address: null } })) as unknown as JsonView)["@graph"][0];
+  assert.equal(noAddress["@type"], "Organization");
+  assert.equal(noAddress.telephone, undefined);
+});
+
 test("free-text working hours are not marked up", () => {
-  const config = productionConfig({ workingHours: "Пн–Пт 9:00–19:00, без выходных" });
-  const organization = (createSiteJsonLd(config) as unknown as JsonView)["@graph"][0];
+  const settings = savedSettings({ workingHours: "Пн–Пт 9:00–19:00, без выходных" });
+  const organization = (createSiteJsonLd(productionConfig(), settings) as unknown as JsonView)["@graph"][0];
   assert.equal(organization.openingHoursSpecification, undefined);
 });
 

@@ -3,23 +3,26 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { businessConfig } from "@/config/business";
 import {
+  createLegalDocuments,
   legalDocumentBySlug,
-  legalDocuments,
   LEGAL_PLACEHOLDER,
 } from "@/lib/legal-documents";
 import { createPageSeoMetadata } from "@/lib/structured-data";
+import { getSiteSettings } from "@/server/services/site-settings-service";
 
 interface LegalDocumentPageProps {
   params: Promise<{ slug: string }>;
 }
 
-// Unknown slugs are answered by the router with the root not-found page (404),
-// rendered on the server inside the root layout.
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return legalDocuments.map((document) => ({ slug: document.slug }));
-}
+// Rendered on request, not prerendered: the texts include contacts, the store
+// address, hours and delivery terms from the settings edited in the admin
+// (one cached settings query per request, shared with the layout).
+// Not ISR: with prerendered params and `dynamicParams = false`, saving the
+// settings (revalidatePath("/", "layout")) expires these pages and Next.js
+// 16 then answers them with 404 (NoFallbackError); with `dynamicParams = true`
+// the 404 of every unknown slug would be written to the cache on disk.
+// Unknown slugs get the root not-found page (404) from notFound() below.
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,
@@ -42,7 +45,8 @@ export default async function LegalDocumentPage({
   params,
 }: LegalDocumentPageProps) {
   const { slug } = await params;
-  const document = legalDocumentBySlug.get(slug);
+  const settings = await getSiteSettings();
+  const document = createLegalDocuments(settings).find((item) => item.slug === slug);
 
   if (!document) {
     notFound();

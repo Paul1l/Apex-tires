@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react";
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createOrder } from "@/lib/api/order-client";
 import { businessConfig, getEnabledDeliveryMethods } from "@/config/business";
+import { useSiteSettings } from "@/components/site-settings-provider";
 import type { DeliveryMethod, UserProfile } from "@/lib/types";
 
 interface CheckoutFormProps {
@@ -87,7 +88,10 @@ function RequiredMark() {
 }
 
 export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
-  const enabledDeliveryMethods = getEnabledDeliveryMethods();
+  // Delivery options and services from the settings saved in the admin; the
+  // server checks the order against the same settings.
+  const { delivery, services } = useSiteSettings();
+  const enabledDeliveryMethods = getEnabledDeliveryMethods({ delivery });
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod | "">(
     enabledDeliveryMethods[0] ?? "",
   );
@@ -253,9 +257,9 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
               setDeliveryMethod(event.target.value as DeliveryMethod)
             }
           >
-            {businessConfig.delivery.pickup.enabled && <option value="pickup">Самовывоз</option>}
-            {businessConfig.delivery.cityDelivery.enabled && <option value="courier">Доставка по {businessConfig.location.cityDative}</option>}
-            {businessConfig.delivery.regionalDelivery.enabled && <option value="transport_company">Доставка транспортной компанией</option>}
+            {delivery.pickup.enabled && <option value="pickup">Самовывоз</option>}
+            {delivery.cityDelivery.enabled && <option value="courier">Доставка по {businessConfig.location.cityDative}</option>}
+            {delivery.regionalDelivery.enabled && <option value="transport_company">Доставка транспортной компанией</option>}
           </select>
         ) : (
           <small className="checkout-error" id={deliveryNoticeId}>Получение заказов будет включено после согласования условий.</small>
@@ -273,7 +277,7 @@ export function CheckoutForm({ user, items, onSuccess }: CheckoutFormProps) {
           {fieldError("deliveryAddress")}
         </label>
       )}
-      {businessConfig.services.tireService && (
+      {services.tireService && (
         <label className="consent-row checkout-consent">
           <input name="requiresTireService" type="checkbox" />
           <span>Нужен шиномонтаж — условия и время согласует менеджер.</span>

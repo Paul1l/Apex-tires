@@ -38,6 +38,7 @@ import {
   normalizeTelephoneHref,
 } from "@/config/business";
 import { BrandWordmark } from "@/components/brand-wordmark";
+import { useSiteSettings } from "@/components/site-settings-provider";
 import { formatPrice, seasonLabels } from "@/lib/catalog-data";
 import { openCookieSettings } from "@/lib/cookie-consent";
 import { CheckoutForm } from "@/components/checkout-form";
@@ -846,6 +847,7 @@ function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => void; notify: Notify }) {
   const { cart, products, setCartQuantity, clearCart, user, cartError } = useStore();
+  const { delivery } = useSiteSettings();
   const [ordered, setOrdered] = useState(false);
   const [orderNumber, setOrderNumber] = useState("");
   const titleId = useId();
@@ -928,8 +930,9 @@ function CartDrawer({ open, onClose, notify }: { open: boolean; onClose: () => v
               <div>
                 <span>Получение</span>
                 <strong>
-                  {businessConfig.delivery.pickup.enabled ||
-                  businessConfig.delivery.cityDelivery.enabled
+                  {delivery.pickup.enabled ||
+                  delivery.cityDelivery.enabled ||
+                  delivery.regionalDelivery.enabled
                     ? "Выберите ниже"
                     : "Условия уточняются"}
                 </strong>
@@ -1219,6 +1222,7 @@ export function Storefront({
   intro,
 }: StorefrontProps) {
   const { products, cart, favorites, compare, user, mergeCatalogProducts } = useStore();
+  const { contacts, workingHours, services } = useSiteSettings();
   const pathname = usePathname();
   const databaseCatalogEnabled = businessConfig.catalog.dataMode === "database";
   const defaultFilters = useMemo<CatalogFilters>(
@@ -1920,16 +1924,16 @@ export function Storefront({
             <Link href="/shiny#catalog" aria-current={pathname === "/shiny" ? "page" : undefined} onClick={(event) => handleCategoryLinkClick(event, "tire")}>Шины</Link>
             <Link href="/diski#catalog" aria-current={pathname === "/diski" ? "page" : undefined} onClick={(event) => handleCategoryLinkClick(event, "wheel")}>Диски</Link>
             <Link href="/#selector" onClick={handleCarSelectorLinkClick}>Подбор по автомобилю</Link>
-            {businessConfig.services.tireService && <a href="#services" onClick={() => setMobileMenu(false)}>Шиномонтаж</a>}
+            {services.tireService && <a href="#services" onClick={() => setMobileMenu(false)}>Шиномонтаж</a>}
             <Link href="/contacts" onClick={() => setMobileMenu(false)}>Контакты</Link>
             {/* Phone layout only: the header has no room for these two buttons there. */}
             <button type="button" className="mobile-menu-collection" aria-haspopup="dialog" onClick={() => openCollectionFromMenu("favorites")}>Избранное ({favorites.length})</button>
             <button type="button" className="mobile-menu-collection" aria-haspopup="dialog" onClick={() => openCollectionFromMenu("compare")}>Сравнение ({compare.length})</button>
           </nav>
           <div className="header-contact">
-            {businessConfig.workingHours && <span>{businessConfig.workingHours}</span>}
-            {businessConfig.contacts.phone ? (
-              <a href={normalizeTelephoneHref(businessConfig.contacts.phone)}>{businessConfig.contacts.phone}</a>
+            {workingHours && <span>{workingHours}</span>}
+            {contacts.phone ? (
+              <a href={normalizeTelephoneHref(contacts.phone)}>{contacts.phone}</a>
             ) : (
               <Link href="/contacts">Контактные данные</Link>
             )}
@@ -2279,7 +2283,7 @@ export function Storefront({
         </div>
       </section>
 
-      {businessConfig.services.tireService && <section className="service-section" id="services">
+      {services.tireService && <section className="service-section" id="services">
         <div className="container service-grid">
           <div className="service-visual" aria-hidden="true">
             <span className="service-number">01</span>
@@ -2300,13 +2304,13 @@ export function Storefront({
         </div>
       </section>}
 
-      {businessConfig.contacts.phone && <section className="consult-section">
+      {contacts.phone && <section className="consult-section">
         <div className="container consult-inner">
           <div>
             <p className="eyebrow">Остались вопросы?</p>
             <h2>Свяжитесь<br />с магазином</h2>
           </div>
-          <div className="consult-copy"><p>Уточните наличие, параметры товара и доступные способы получения.</p><a href={normalizeTelephoneHref(businessConfig.contacts.phone)}><Phone size={17} aria-hidden="true" /> {businessConfig.contacts.phone}</a></div>
+          <div className="consult-copy"><p>Уточните наличие, параметры товара и доступные способы получения.</p><a href={normalizeTelephoneHref(contacts.phone)}><Phone size={17} aria-hidden="true" /> {contacts.phone}</a></div>
           <Link className="light-button" href="/contacts">Все способы связи <ArrowRight size={17} aria-hidden="true" /></Link>
         </div>
       </section>}
@@ -2317,15 +2321,15 @@ export function Storefront({
           <div className="footer-brand">
             <Link href="/" className="brand-logo light" aria-label={`${businessConfig.brandName} — на главную`}><span className="logo-mark" aria-hidden="true"><i /><i /><i /></span><BrandWordmark /></Link>
             <p>Каталог шин и дисков в {businessConfig.location.cityPrepositional}.</p>
-            {businessConfig.contacts.phone && <strong>{businessConfig.contacts.phone}</strong>}
-            {businessConfig.workingHours && <span>{businessConfig.workingHours}</span>}
+            {contacts.phone && <strong>{contacts.phone}</strong>}
+            {workingHours && <span>{workingHours}</span>}
           </div>
           <div>
             <h2 className="footer-title">Каталог</h2>
             <Link href="/shiny#catalog" onClick={(event) => handleCategoryLinkClick(event, "tire")}>Шины</Link>
             <Link href="/diski#catalog" onClick={(event) => handleCategoryLinkClick(event, "wheel")}>Диски</Link>
             <Link href="/#selector" onClick={handleCarSelectorLinkClick}>Подбор по автомобилю</Link>
-            {businessConfig.services.tireService && <a href="#services">Шиномонтаж</a>}
+            {services.tireService && <a href="#services">Шиномонтаж</a>}
           </div>
           <div><h2 className="footer-title">Покупателям</h2><Link href="/legal/delivery-payment-returns">Доставка, оплата и возврат</Link><Link href="/legal/offer">Публичная оферта</Link><Link href="/legal/terms">Правила пользования</Link></div>
           <div><h2 className="footer-title">Компания</h2><Link href="/contacts">Контакты</Link><Link href="/legal/requisites">Реквизиты</Link><Link href="/legal/privacy">Персональные данные</Link><button type="button" onClick={openCookieSettings}>Настройки cookie</button></div>

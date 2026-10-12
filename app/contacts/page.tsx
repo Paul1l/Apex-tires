@@ -8,9 +8,15 @@ import {
   normalizeTelephoneHref,
 } from "@/config/business";
 import { createPageSeoMetadata, formatWorkingHours } from "@/lib/structured-data";
+import { getSiteSettings } from "@/server/services/site-settings-service";
 import styles from "./contacts.module.css";
 
 const { location } = businessConfig;
+
+// Contacts, address and hours come from the settings edited in the admin:
+// ISR instead of a page built once (see app/layout.tsx); saving the settings
+// revalidates it at once.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Контакты",
@@ -24,12 +30,13 @@ function NewTabHint() {
   return <span className={styles.visuallyHidden}> (откроется в новой вкладке)</span>;
 }
 
-export default function ContactsPage() {
+export default async function ContactsPage() {
+  const settings = await getSiteSettings();
   const sellerName = businessConfig.businessName ?? getSellerDisplayName();
-  const { phone, email, whatsapp, telegram } = businessConfig.contacts;
-  const { address, twoGisUrl } = location;
+  const { phone, email, whatsapp, telegram } = settings.contacts;
+  const { address, twoGisUrl } = settings.location;
   const hasContacts = Boolean(phone || email || address);
-  const workingHours = formatWorkingHours(businessConfig.workingHours);
+  const workingHours = formatWorkingHours(settings.workingHours);
 
   return (
     <main className="contacts-page">

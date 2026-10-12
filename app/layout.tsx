@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { Manrope, Unbounded } from "next/font/google";
 import { PrivacyTools } from "@/components/privacy-tools";
+import { SiteSettingsProvider } from "@/components/site-settings-provider";
 import { StoreProvider } from "@/components/store-provider";
 import { businessConfig } from "@/config/business";
 import { createBaseOpenGraph, createSiteJsonLd, serializeJsonLd } from "@/lib/structured-data";
+import { getSiteSettings } from "@/server/services/site-settings-service";
 import "./globals.css";
 
 // Fonts (PERF-04). Both are variable fonts: one file per alphabet covers
@@ -28,6 +30,15 @@ const unbounded = Unbounded({
 });
 
 const { brandName, location } = businessConfig;
+
+// Every page shows store data edited in the admin (contacts, hours, delivery,
+// services: getSiteSettings below), so no page stays with the values of the
+// build forever: pages that were static become ISR and are rebuilt in the
+// background at most every 5 minutes (one settings query per rebuild). Saving
+// the settings in the admin revalidates the whole site at once
+// (revalidatePath("/", "layout")). Pages with their own shorter interval or
+// dynamic rendering keep it.
+export const revalidate = 300;
 
 // Icons come from app/favicon.ico, app/icon.svg (the header mark) and
 // app/apple-icon.png. Next.js emits these file-based icons only while
@@ -66,12 +77,15 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image" },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const structuredData = createSiteJsonLd();
+  // One query per request (React cache, shared with the page); defaults from
+  // the build without a database or when it is unavailable.
+  const settings = await getSiteSettings();
+  const structuredData = createSiteJsonLd(businessConfig, settings);
 
   return (
     <html lang="ru">
@@ -82,13 +96,16 @@ export default function RootLayout({
             dangerouslySetInnerHTML={{ __html: serializeJsonLd(structuredData) }}
           />
         )}
-        <StoreProvider>
-          {/* First in the DOM (A11Y-10): the cookie banner is fixed at the
-              bottom of the screen, but keyboard and screen reader users reach
-              it first instead of after the whole page. */}
-          <PrivacyTools />
-          {children}
-        </StoreProvider>
+        {/* Plain JSON for client components (useSiteSettings). */}
+        <SiteSettingsProvider settings={settings}>
+          <StoreProvider>
+            {/* First in the DOM (A11Y-10): the cookie banner is fixed at the
+                bottom of the screen, but keyboard and screen reader users reach
+                it first instead of after the whole page. */}
+            <PrivacyTools />
+            {children}
+          </StoreProvider>
+        </SiteSettingsProvider>
       </body>
     </html>
   );

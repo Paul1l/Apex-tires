@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { businessConfig, getSellerDisplayName, type AvailabilityDisplayMode, type BusinessConfig } from "../config/business";
 import { validateBusinessConfig } from "../config/business-validation";
+import { applySiteSettingsToConfig, type SiteSettings } from "./site-settings";
 import { getAvailabilityPresentation } from "./product-presentation";
 import type { ProductDetails, ProductKind } from "./types";
 
@@ -303,18 +304,26 @@ function httpUrls(values: Array<string | null>): string[] {
 /**
  * Site-wide JSON-LD (`@graph` with the organization and the WebSite).
  *
+ * Brand, site URL, seller and logo come from the configuration; telephone,
+ * email, address, coordinates, opening hours and profile links (`sameAs`)
+ * from the store settings edited in the admin (`getSiteSettings()`).
+ *
  * Only on the production stage: preview contacts are not confirmed (the only
  * confirmation gate is `assertProductionBusinessConfig`). A value is used only
- * if it passes `validateBusinessConfig` (no placeholders or test data). The
- * organization becomes a `TireShop` (schema.org LocalBusiness) only with a
- * confirmed address and phone; opening hours only in the schema.org format.
+ * if it passes `validateBusinessConfig` (no placeholders or test data); saved
+ * settings go through the same checks. The organization becomes a `TireShop`
+ * (schema.org LocalBusiness) only with a confirmed address and phone; opening
+ * hours only in the schema.org format.
  */
-export function createSiteJsonLd(config: BusinessConfig = businessConfig): JsonLd | null {
+export function createSiteJsonLd(config: BusinessConfig, settings: SiteSettings): JsonLd | null {
   if (config.deploymentStage !== "production") return null;
   const siteUrl = toAbsoluteUrl(config.siteUrl, "/");
   if (!siteUrl) return null;
 
-  const invalidFields = new Set(validateBusinessConfig(config).map((issue) => issue.field));
+  // The saved phone, email and address pass the same checks as the build.
+  const invalidFields = new Set(
+    validateBusinessConfig(applySiteSettingsToConfig(config, settings)).map((issue) => issue.field),
+  );
   const confirmed = (field: string) => !invalidFields.has(field);
   if (!confirmed("siteUrl")) return null;
 
@@ -323,7 +332,11 @@ export function createSiteJsonLd(config: BusinessConfig = businessConfig): JsonL
   const logo = logoSource ? toAbsoluteUrl(siteUrl, logoSource) : null;
   const sellerName = confirmed("seller") ? getSellerDisplayName(config) : null;
   const businessName = confirmed("businessName") ? config.businessName : null;
-  const sameAs = httpUrls([config.social.vk, config.social.telegram, config.social.twoGis]);
+  const sameAs = httpUrls([
+    settings.contacts.vk,
+    settings.contacts.telegram,
+    settings.location.twoGisUrl,
+  ]);
 
   const organization: JsonLd = {
     "@type": "Organization",
@@ -336,11 +349,11 @@ export function createSiteJsonLd(config: BusinessConfig = businessConfig): JsonL
     sameAs: sameAs.length > 0 ? sameAs : undefined,
   };
 
-  const { address, latitude, longitude } = config.location;
-  const phone = confirmed("contacts.phone") ? config.contacts.phone : null;
-  const email = confirmed("contacts.email") ? config.contacts.email : null;
+  const { address, latitude, longitude } = settings.location;
+  const phone = confirmed("contacts.phone") ? settings.contacts.phone : null;
+  const email = confirmed("contacts.email") ? settings.contacts.email : null;
   if (address && phone && confirmed("location.address")) {
-    const openingHours = parseSchemaOpeningHours(config.workingHours);
+    const openingHours = parseSchemaOpeningHours(settings.workingHours);
     Object.assign(organization, {
       "@type": "TireShop",
       image: logo ?? undefined,
