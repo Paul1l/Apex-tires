@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AdminDashboard } from "@/components/admin-dashboard";
+import { parseAdminSection } from "@/lib/admin/admin-sections";
 import { StaffLoginForm } from "@/components/admin/staff-login-form";
 import { getStaffPageAccess } from "@/server/security/staff-page-guard";
 
@@ -28,7 +29,11 @@ function AccessMessage({ message }: { message: string }) {
   );
 }
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ section?: string | string[] }>;
+}) {
   const access = await getStaffPageAccess();
   if (access.status === "not_configured") {
     return (
@@ -36,7 +41,13 @@ export default async function AdminPage() {
     );
   }
   if (access.status === "allowed") {
-    return <AdminDashboard authorizedUser={access.user} />;
+    const { section } = await searchParams;
+    return (
+      <AdminDashboard
+        authorizedUser={access.user}
+        initialSection={parseAdminSection(section)}
+      />
+    );
   }
   // Signed out, or signed in only as a customer (email code): staff rights
   // need the authenticator sign-in.

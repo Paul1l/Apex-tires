@@ -58,13 +58,36 @@ export interface CatalogFacetRow {
 // Static SQL (no user input) mirroring isSafeImageUrl, so the first *safe*
 // image is selected even if older rows contain javascript:/data:/http: URLs.
 // Rows are additionally passed through toSafeImageUrl after the query.
-const SAFE_IMAGE_URL_SQL = `(
+// Also used by the admin catalog list (admin-catalog-product-repository.ts).
+export const SAFE_IMAGE_URL_SQL = `(
   (LOWER(LEFT(product_images.url, 8)) = 'https://'
     OR (LEFT(product_images.url, 1) = '/' AND LEFT(product_images.url, 2) <> '//'))
   AND product_images.url !~ '[[:cntrl:]]'
   AND STRPOS(product_images.url, CHR(92)) = 0
   AND product_images.url = BTRIM(product_images.url)
 )`;
+
+/**
+ * A verified fitment row (table fitments) applies to a product when the
+ * product's typed specs match the vehicle's size. Static SQL that expects the
+ * aliases products, tire_specs, wheel_specs and fitments. Shared by the
+ * storefront vehicle filter and the admin fitment editor.
+ */
+export const FITMENT_MATCHES_PRODUCT_SQL = `(
+          (products.kind = 'tire' AND fitments.product_type = 'tire'
+            AND tire_specs.width = fitments.tire_width
+            AND tire_specs.profile = fitments.tire_profile
+            AND tire_specs.diameter = fitments.tire_diameter)
+          OR
+          (products.kind = 'wheel' AND fitments.product_type = 'wheel'
+            AND wheel_specs.diameter = fitments.wheel_diameter
+            AND wheel_specs.width = fitments.wheel_width
+            AND wheel_specs.bolt_count = fitments.bolt_count
+            AND wheel_specs.pcd = fitments.pcd
+            AND (fitments.dia IS NULL OR wheel_specs.dia >= fitments.dia)
+            AND (fitments.et_min IS NULL OR wheel_specs.et >= fitments.et_min)
+            AND (fitments.et_max IS NULL OR wheel_specs.et <= fitments.et_max))
+        )`;
 
 function withSafeImage(row: CatalogProductRow): CatalogProductRow {
   return { ...row, image: toSafeImageUrl(row.image) };
@@ -145,21 +168,7 @@ function createCatalogFilter(query: CatalogQuery): SqlFilter {
         AND LOWER(car_models.name) = LOWER($${modelParameter})
         AND LOWER(car_generations.name) = LOWER($${generationParameter})
         ${modificationClause}
-        AND (
-          (products.kind = 'tire' AND fitments.product_type = 'tire'
-            AND tire_specs.width = fitments.tire_width
-            AND tire_specs.profile = fitments.tire_profile
-            AND tire_specs.diameter = fitments.tire_diameter)
-          OR
-          (products.kind = 'wheel' AND fitments.product_type = 'wheel'
-            AND wheel_specs.diameter = fitments.wheel_diameter
-            AND wheel_specs.width = fitments.wheel_width
-            AND wheel_specs.bolt_count = fitments.bolt_count
-            AND wheel_specs.pcd = fitments.pcd
-            AND (fitments.dia IS NULL OR wheel_specs.dia >= fitments.dia)
-            AND (fitments.et_min IS NULL OR wheel_specs.et >= fitments.et_min)
-            AND (fitments.et_max IS NULL OR wheel_specs.et <= fitments.et_max))
-        )
+        AND ${FITMENT_MATCHES_PRODUCT_SQL}
     )`);
   }
   return { sql: clauses.join("\n AND "), values };

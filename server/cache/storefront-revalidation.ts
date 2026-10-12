@@ -32,3 +32,34 @@ export function revalidateStorefrontCatalog(
   }
   return revalidated;
 }
+
+/**
+ * Storefront page of one product, as linked from the catalog cards:
+ * `/tires/<slug>` or `/wheels/<slug>` with the slug percent-encoded.
+ */
+export function storefrontProductPath(product: { kind: "tire" | "wheel"; slug: string }): string {
+  return `/${product.kind === "tire" ? "tires" : "wheels"}/${encodeURIComponent(product.slug)}`;
+}
+
+/**
+ * Resets the catalog pages and the page of one changed product (admin
+ * editor). Product pages are rendered on every request today; resetting them
+ * too keeps the editor correct if they get a cache later. Failures are
+ * logged, never thrown (see revalidateStorefrontCatalog).
+ */
+export function revalidateStorefrontProduct(
+  reason: string,
+  product: { kind: "tire" | "wheel"; slug: string } | null,
+  revalidate: (path: string) => void = revalidatePath,
+): boolean {
+  let revalidated = revalidateStorefrontCatalog(reason, revalidate);
+  if (!product) return revalidated;
+  const path = storefrontProductPath(product);
+  try {
+    revalidate(path);
+  } catch (error) {
+    revalidated = false;
+    applicationLogger.warn({ error, path, reason }, "Storefront product cache reset failed");
+  }
+  return revalidated;
+}

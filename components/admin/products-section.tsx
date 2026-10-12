@@ -1,9 +1,12 @@
 "use client";
 
-import { Search, Upload } from "lucide-react";
+import { Pencil, Plus, Search, Upload } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { formatPrice, seasonLabels } from "@/lib/catalog-data";
-import type { Product, ProductKind } from "@/lib/types";
+import { seasonLabels } from "@/lib/catalog-data";
+import { formatKopecks, productSourceLabels } from "@/lib/admin/product-form";
+import type { AdminProductListItem, AdminProductListResponse } from "@/lib/admin/product-types";
+import type { ProductKind } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 import { ImportJobs } from "@/components/admin/import-jobs";
 
@@ -16,7 +19,7 @@ interface CsvImportReport {
   errors: Array<{ line: number; message: string }>;
 }
 
-function MiniArt({ product }: { product: Product }) {
+function MiniArt({ product }: { product: AdminProductListItem }) {
   if (product.image) {
     // eslint-disable-next-line @next/next/no-img-element
     return <span className="admin-product-thumb image"><img src={product.image} alt="" /></span>;
@@ -96,7 +99,7 @@ export function ProductsSection() {
   const { user } = useStore();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"all" | ProductKind>("all");
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<AdminProductListItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
@@ -111,7 +114,7 @@ export function ProductsSection() {
   useEffect(() => {
     const abortController = new AbortController();
     const timeout = window.setTimeout(() => {
-      const parameters = new URLSearchParams({ type: kind, page: String(page), pageSize: "24", sort: "newest" });
+      const parameters = new URLSearchParams({ type: kind, page: String(page), pageSize: "24" });
       if (query.trim()) parameters.set("search", query.trim());
       parameters.set("active", activeFilter);
       if (sourceFilter) parameters.set("sourceSystem", sourceFilter);
@@ -121,11 +124,7 @@ export function ProductsSection() {
         cache: "no-store",
         signal: abortController.signal,
       }).then(async (response) => {
-        const result = (await response.json()) as {
-          items?: Product[];
-          pagination?: { total: number; totalPages: number };
-          message?: string;
-        };
+        const result = (await response.json()) as Partial<AdminProductListResponse> & { message?: string };
         if (!response.ok) throw new Error(result.message || "Каталог недоступен.");
         setProducts(result.items ?? []);
         setTotal(result.pagination?.total ?? 0);
@@ -155,6 +154,7 @@ export function ProductsSection() {
     <>
       <div className="admin-page-intro">
         <div><p className="eyebrow">Управление каталогом</p><h1>Товары</h1><span>{total} позиций · рабочий источник PostgreSQL</span></div>
+        <Link className="admin-primary-button" href="/admin/products/new"><Plus size={17} /> Добавить товар</Link>
       </div>
       <div className="admin-two-column">
         <CsvImportForm type="products" title="Импорт products.csv" />
@@ -163,23 +163,24 @@ export function ProductsSection() {
       <ImportJobs />
       <article className="admin-card products-card">
         <div className="admin-products-toolbar">
-          <label className="admin-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Название, бренд или артикул" /></label>
-          <select aria-label="Активность товара" value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}><option value="true">Активные</option><option value="false">Неактивные</option></select>
+          <label className="admin-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="SKU, артикул, название, модель или бренд" aria-label="Поиск товаров" /></label>
+          <select aria-label="Активность товара" value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}><option value="true">Активные</option><option value="false">Неактивные</option><option value="all">Все</option></select>
           <select aria-label="Источник товара" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="">Все источники</option><option value="csv">CSV</option><option value="manual">Вручную</option><option value="1c">1С</option></select>
           <div className="admin-segmented"><button className={kind === "all" ? "active" : ""} onClick={() => setKind("all")}>Все</button><button className={kind === "tire" ? "active" : ""} onClick={() => setKind("tire")}>Шины</button><button className={kind === "wheel" ? "active" : ""} onClick={() => setKind("wheel")}>Диски</button></div>
         </div>
         <div className="admin-table-wrap">
           <table className="admin-table products-table">
-            <thead><tr><th>Выбор</th><th>Товар</th><th>Тип / сезон</th><th>Цена</th><th>Доступно</th><th>Внешний ID</th><th>Обновлён</th></tr></thead>
+            <thead><tr><th>Выбор</th><th>Товар</th><th>Тип / сезон</th><th>Цена</th><th>Доступно</th><th>Внешний ID</th><th>Обновлён</th><th>Действие</th></tr></thead>
             <tbody>{products.map((product) => (
               <tr key={product.id}>
                 <td><input type="checkbox" aria-label={`Выбрать ${product.sku}`} checked={selectedIds.includes(product.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /></td>
-                <td><div className="admin-product-cell"><MiniArt product={product} /><p><strong>{product.brand} {product.model}</strong><span>{product.subtitle}</span><small>{product.sku}</small></p></div></td>
+                <td><div className="admin-product-cell"><MiniArt product={product} /><p><strong>{product.brand} {product.model}</strong><span>{product.subtitle}</span><small>{product.sku}{product.isActive ? "" : " · скрыт"}</small></p></div></td>
                 <td>{product.kind === "tire" ? <><strong>Шина</strong><small>{seasonLabels[product.season]}</small></> : <><strong>Диск</strong><small>{product.color}</small></>}</td>
-                <td><strong>{formatPrice(product.price)}</strong>{product.oldPrice && <small><s>{formatPrice(product.oldPrice)}</s></small>}</td>
+                <td>{product.priceKopecks === null ? <><strong>—</strong><small>Цена не задана</small></> : <><strong>{formatKopecks(product.priceKopecks)}</strong>{product.oldPriceKopecks !== null && <small><s>{formatKopecks(product.oldPriceKopecks)}</s></small>}</>}</td>
                 <td><span className={`inventory-pill ${product.stock - product.reserved <= 6 ? "low" : ""}`}>{product.stock - product.reserved} шт.</span><small>резерв {product.reserved}</small></td>
-                <td><code>{product.externalId || "—"}</code></td>
+                <td><code>{product.externalId || "—"}</code><small>{productSourceLabels[product.source] ?? product.source}</small></td>
                 <td><span>{new Date(product.updatedAt).toLocaleDateString("ru-RU")}</span><small>{new Date(product.updatedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</small></td>
+                <td><Link className="admin-secondary-button" href={`/admin/products/${product.id}`} aria-label={`Изменить ${product.sku}`}><Pencil size={14} /> Изменить</Link></td>
               </tr>
             ))}</tbody>
           </table>

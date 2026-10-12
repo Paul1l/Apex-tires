@@ -30,6 +30,7 @@ import {
 } from "react";
 import { businessConfig } from "@/config/business";
 import { validateBusinessConfig } from "@/config/business-validation";
+import type { AdminSection } from "@/lib/admin/admin-sections";
 import type { UserProfile } from "@/lib/types";
 import { useStore } from "@/components/store-provider";
 import { FitmentRequests } from "@/components/admin/fitment-requests";
@@ -38,7 +39,7 @@ import { ProductsSection } from "@/components/admin/products-section";
 import { SettingsSection } from "@/components/admin/settings-section";
 import { StaffSection } from "@/components/admin/staff-section";
 
-type Section = "overview" | "products" | "orders" | "sync" | "settings" | "fitment-requests" | "staff";
+type Section = AdminSection;
 
 interface OneCGatewayHealth {
   ok: boolean;
@@ -188,11 +189,18 @@ function SyncSection() {
   );
 }
 
-export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile }) {
+export function AdminDashboard({
+  authorizedUser,
+  initialSection = "overview",
+}: {
+  authorizedUser: UserProfile;
+  /** From /admin?section=… (links back from the product and order pages). */
+  initialSection?: Section;
+}) {
   const { user: hydratedUser, logout } = useStore();
   const router = useRouter();
   const user = hydratedUser ?? authorizedUser;
-  const [section, setSection] = useState<Section>("overview");
+  const [section, setSection] = useState<Section>(initialSection);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const navigation = useMemo(
@@ -211,6 +219,8 @@ export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile
   function navigate(value: Section) {
     setSection(value);
     setSidebarOpen(false);
+    // Keeps the section on reload and makes it linkable.
+    window.history.replaceState(null, "", value === "overview" ? "/admin" : `/admin?section=${value}`);
   }
 
   return (
@@ -229,7 +239,7 @@ export function AdminDashboard({ authorizedUser }: { authorizedUser: UserProfile
           <div className="admin-breadcrumb">{businessConfig.brandName} CONTROL <ChevronRight size={13} /> <strong>{navigation.find((item) => item.id === section)?.label}</strong></div>
           <div className="admin-topbar-actions">
             <button className="admin-sync-button" onClick={() => navigate("sync")}><RefreshCw size={16} /> <span>1С: настройка</span></button>
-            <button className="admin-user-button"><span>{user.name.slice(0, 1)}</span><p><strong>{user.name}</strong><small>Администратор</small></p></button>
+            <button className="admin-user-button"><span>{user.name.slice(0, 1)}</span><p><strong>{user.name}</strong><small>{user.role === "admin" ? "Администратор" : "Менеджер"}</small></p></button>
             <button className="admin-logout" onClick={async () => {
               // Re-render the server page: without a session it shows the sign-in message
               // instead of the already loaded dashboard data.
